@@ -43,3 +43,16 @@ export function getAutoMapStatus(taskId) {
 export function getAiSuggestions(params) {
   return api.get('/mappings/ai-suggestions', { params }).then((res) => res.data)
 }
+
+export function exportMappings() {
+  return api.get('/mappings/export', { responseType: 'blob' }).then((res) => {
+    const url = window.URL.createObjectURL(new Blob([res.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `映射数据_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+  })
+}

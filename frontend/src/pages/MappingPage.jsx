@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Tabs, Typography, message, Spin } from 'antd'
+import { Tabs, Typography, Button, message, Spin } from 'antd'
+import { DownloadOutlined } from '@ant-design/icons'
 import MappingTable from '../components/mapping/MappingTable'
 import BatchMappingDialog from '../components/mapping/BatchMappingDialog'
 import VisualizationGraph from '../components/mapping/VisualizationGraph'
 import AutoMapPanel from '../components/mapping/AutoMapPanel'
-import { getMappings, deleteMapping, getMappingStats } from '../services/mappingService'
+import { getMappings, deleteMapping, getMappingStats, exportMappings } from '../services/mappingService'
 
 const { Title } = Typography
 
@@ -56,8 +57,13 @@ export default function MappingPage() {
       label: '映射列表',
       children: (
         <div>
-          <div style={{ marginBottom: 16 }}>
-            <AutoMapPanel stats={stats} onComplete={() => { loadData(1); loadStats() }} />
+          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <AutoMapPanel stats={stats} onComplete={() => { loadData(1); loadStats() }} />
+            </div>
+            <Button icon={<DownloadOutlined />} onClick={() => exportMappings().catch(() => message.error('导出失败'))}>
+              导出Excel
+            </Button>
           </div>
           <MappingTable
             data={data}

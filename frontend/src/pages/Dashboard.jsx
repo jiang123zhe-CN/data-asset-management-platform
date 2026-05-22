@@ -47,7 +47,7 @@ export default function Dashboard() {
               value={summary?.pending_reviews || 0}
               suffix={`/ ${summary?.anomaly_count || 0}`}
               prefix={<AuditOutlined />}
-              valueStyle={{ color: (summary?.pending_reviews || 0) > 0 ? '#cf1322' : undefined }}
+              styles={{ content: { color: (summary?.pending_reviews || 0) > 0 ? '#cf1322' : undefined } }}
             />
           </Card>
         </Col>

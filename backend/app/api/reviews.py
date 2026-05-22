@@ -9,6 +9,8 @@ from app.core.database import get_db
 from app.core.security import get_current_user, require_role
 from app.models.user import User
 from app.models.field import Field
+from app.models.directory import Directory
+from app.models.mapping import DirectoryFieldMapping
 from app.models.review_record import ReviewRecord
 from app.services.anomaly_detector import detect_anomalies
 from app.schemas.review import ReviewSubmit, ReviewResponse, ReviewStatsResponse
@@ -41,22 +43,31 @@ def list_reviews(
     result = []
     for r in items:
         field = db.query(Field).filter(Field.id == r.field_id).first()
-        result.append({
+        item = {
             "id": r.id,
             "field_id": r.field_id,
             "reviewer_id": r.reviewer_id,
             "review_status": r.review_status,
             "review_type": r.review_type,
             "anomaly_type": r.anomaly_type,
-            "original_data": r.original_data,
-            "modified_data": r.modified_data,
             "comment": r.comment,
             "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
             "created_at": r.created_at.isoformat(),
             "field_code": field.field_code if field else None,
             "field_name": field.name if field else None,
             "field_table": field.table_name if field else None,
-        })
+        }
+        # Parse AI mapping suggestion details
+        if r.review_type == "ai_mapping" and r.original_data:
+            try:
+                item["ai_suggestion"] = json.loads(r.original_data)
+            except (json.JSONDecodeError, TypeError):
+                item["original_data"] = r.original_data
+        elif r.original_data:
+            item["original_data"] = r.original_data
+        if r.modified_data:
+            item["modified_data"] = r.modified_data
+        result.append(item)
 
     return PaginatedResponse(
         items=result,
@@ -129,7 +140,6 @@ def submit_review(
     r.reviewed_at = datetime.now(timezone.utc)
 
     if body.corrected_field_data:
-        r.modified_data = json.dumps(body.corrected_field_data, ensure_ascii=False)
         field = db.query(Field).filter(Field.id == r.field_id).first()
         if field:
             for key, val in body.corrected_field_data.items():
@@ -137,6 +147,24 @@ def submit_review(
                     setattr(field, key, val)
             field.is_anomaly = False
             field.anomaly_type = None
+
+    # If AI mapping review is approved, create the actual mapping
+    if r.review_type == "ai_mapping" and body.status == "approved":
+        original = json.loads(r.original_data) if r.original_data else {}
+        did = original.get("suggested_directory_id")
+        if did:
+            existing = db.query(DirectoryFieldMapping).filter(
+                DirectoryFieldMapping.field_id == r.field_id,
+                DirectoryFieldMapping.directory_id == did,
+            ).first()
+            if not existing:
+                db.add(DirectoryFieldMapping(
+                    directory_id=did,
+                    field_id=r.field_id,
+                    mapping_source="ai_suggested",
+                    confidence=original.get("confidence"),
+                    created_by=current_user.id,
+                ))
 
     r.modified_data = json.dumps(body.dict(), ensure_ascii=False)
     db.commit()

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Tabs, Typography, Table, Button, Tag, Space, Drawer, Descriptions, message, Radio, Input, Popconfirm } from 'antd'
-import { CheckCircleOutlined, CloseCircleOutlined, EditOutlined, AlertOutlined } from '@ant-design/icons'
+import { Tabs, Typography, Table, Button, Tag, Space, Drawer, Descriptions, message, Radio, Input, Popconfirm, Progress } from 'antd'
+import { CheckCircleOutlined, CloseCircleOutlined, EditOutlined, AlertOutlined, RobotOutlined } from '@ant-design/icons'
 import { getReviews, submitReview, triggerAnomalyDetection } from '../services/reviewService'
 import { useAuth } from '../hooks/useAuth'
 
@@ -11,6 +11,13 @@ const STATUS_COLORS = {
   approved: 'green',
   corrected: 'blue',
   rejected: 'red',
+}
+
+const STATUS_LABELS = {
+  pending: '待复核',
+  approved: '已通过',
+  corrected: '已修正',
+  rejected: '已驳回',
 }
 
 export default function ReviewPage() {
@@ -74,20 +81,20 @@ export default function ReviewPage() {
     } catch { /* ignore */ }
   }
 
-  const columns = [
+  const anomalyColumns = [
     { title: '字段编码', dataIndex: 'field_code', width: 120 },
     { title: '字段名称', dataIndex: 'field_name', width: 150 },
     { title: '来源表', dataIndex: 'field_table', width: 120 },
     {
-      title: '类型', dataIndex: 'anomaly_type', width: 120,
+      title: '异常类型', dataIndex: 'anomaly_type', width: 120,
       render: (v) => {
-        const labels = { unmapped: '未映射', missing_info: '信息缺失', auto_mapped: 'AI映射' }
+        const labels = { unmapped: '未映射', missing_info: '信息缺失' }
         return <Tag>{labels[v] || v}</Tag>
       },
     },
     {
       title: '状态', dataIndex: 'review_status', width: 100,
-      render: (v) => <Tag color={STATUS_COLORS[v]}>{v}</Tag>,
+      render: (v) => <Tag color={STATUS_COLORS[v]}>{STATUS_LABELS[v] || v}</Tag>,
     },
     {
       title: '创建时间', dataIndex: 'created_at', width: 160,
@@ -95,6 +102,41 @@ export default function ReviewPage() {
     },
     {
       title: '操作', key: 'actions', width: 100,
+      render: (_, record) => (
+        <Button type="link" size="small" onClick={() => handleView(record)}>复核</Button>
+      ),
+    },
+  ]
+
+  const aiColumns = [
+    { title: '字段编码', dataIndex: 'field_code', width: 100 },
+    { title: '字段名称', dataIndex: 'field_name', width: 130 },
+    { title: '来源表', dataIndex: 'field_table', width: 140 },
+    {
+      title: '建议映射目录', dataIndex: 'ai_suggestion', width: 180,
+      render: (v) => v ? (
+        <Space direction="vertical" size={0}>
+          <Text strong>{v.directory_name}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>{v.directory_code}</Text>
+        </Space>
+      ) : '-',
+    },
+    {
+      title: '置信度', dataIndex: 'ai_suggestion', width: 100,
+      render: (v) => v ? (
+        <Progress percent={Math.round((v.confidence || 0) * 100)} size="small" />
+      ) : '-',
+    },
+    {
+      title: '状态', dataIndex: 'review_status', width: 80,
+      render: (v) => <Tag color={STATUS_COLORS[v]}>{STATUS_LABELS[v] || v}</Tag>,
+    },
+    {
+      title: '创建时间', dataIndex: 'created_at', width: 150,
+      render: (v) => v ? new Date(v).toLocaleString('zh-CN') : '-',
+    },
+    {
+      title: '操作', key: 'actions', width: 80,
       render: (_, record) => (
         <Button type="link" size="small" onClick={() => handleView(record)}>复核</Button>
       ),
@@ -113,7 +155,7 @@ export default function ReviewPage() {
             </Button>
           </div>
           <Table
-            columns={columns}
+            columns={anomalyColumns}
             dataSource={data.items}
             rowKey="id"
             loading={loading}
@@ -133,7 +175,7 @@ export default function ReviewPage() {
       label: 'AI 映射复核',
       children: (
         <Table
-          columns={columns}
+          columns={aiColumns}
           dataSource={data.items}
           rowKey="id"
           loading={loading}
@@ -159,7 +201,7 @@ export default function ReviewPage() {
       />
 
       <Drawer
-        title="复核详情"
+        title={currentReview?.review_type === 'ai_mapping' ? 'AI 映射复核详情' : '异常复核详情'}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={500}
@@ -175,9 +217,27 @@ export default function ReviewPage() {
             <Descriptions column={1} size="small" bordered style={{ marginBottom: 16 }}>
               <Descriptions.Item label="字段编码">{currentReview.field_code}</Descriptions.Item>
               <Descriptions.Item label="字段名称">{currentReview.field_name}</Descriptions.Item>
-              <Descriptions.Item label="异常类型">{currentReview.anomaly_type}</Descriptions.Item>
+              <Descriptions.Item label="来源表">{currentReview.field_table}</Descriptions.Item>
+              {currentReview.review_type === 'ai_mapping' && currentReview.ai_suggestion ? (
+                <>
+                  <Descriptions.Item label="建议目录">
+                    <Tag icon={<RobotOutlined />} color="purple">{currentReview.ai_suggestion.directory_name}</Tag>
+                    <Text type="secondary"> ({currentReview.ai_suggestion.directory_code})</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="置信度">
+                    <Progress percent={Math.round((currentReview.ai_suggestion.confidence || 0) * 100)} size="small" style={{ width: 200 }} />
+                  </Descriptions.Item>
+                  <Descriptions.Item label="推荐理由">
+                    <Text>{currentReview.ai_suggestion.reason || '-'}</Text>
+                  </Descriptions.Item>
+                </>
+              ) : (
+                <>
+                  <Descriptions.Item label="异常类型">{currentReview.anomaly_type}</Descriptions.Item>
+                </>
+              )}
               <Descriptions.Item label="状态">
-                <Tag color={STATUS_COLORS[currentReview.review_status]}>{currentReview.review_status}</Tag>
+                <Tag color={STATUS_COLORS[currentReview.review_status]}>{STATUS_LABELS[currentReview.review_status] || currentReview.review_status}</Tag>
               </Descriptions.Item>
             </Descriptions>
 
@@ -191,9 +251,6 @@ export default function ReviewPage() {
                 <Space direction="vertical">
                   <Radio value="approved">
                     <CheckCircleOutlined style={{ color: '#52c41a' }} /> 确认通过
-                  </Radio>
-                  <Radio value="corrected">
-                    <EditOutlined style={{ color: '#1677ff' }} /> 修正
                   </Radio>
                   <Radio value="rejected">
                     <CloseCircleOutlined style={{ color: '#ff4d4f' }} /> 驳回

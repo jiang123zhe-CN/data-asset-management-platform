@@ -138,6 +138,46 @@ def import_fields(db: Session, file: BinaryIO, user: User, file_name: str, file_
     return import_record
 
 
+def export_mappings_to_excel(mappings: list[dict]) -> io.BytesIO:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "资产映射数据"
+
+    headers = [
+        "映射ID", "目录路径", "目录编码", "字段编码", "字段名称",
+        "数据类型", "来源表", "映射来源", "置信度", "创建时间",
+    ]
+    ws.append(headers)
+
+    for m in mappings:
+        ws.append([
+            m.get("id"),
+            m.get("directory_path", ""),
+            m.get("directory_code", ""),
+            m.get("field_code", ""),
+            m.get("field_name", ""),
+            m.get("field_data_type", ""),
+            m.get("field_table", ""),
+            "AI建议" if m.get("mapping_source") == "ai_suggested" else "手动映射",
+            m.get("confidence"),
+            m.get("created_at"),
+        ])
+
+    # Auto-adjust column widths
+    for col in ws.columns:
+        max_len = 0
+        col_letter = col[0].column_letter
+        for cell in col:
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = min(max_len + 4, 50)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+
 def export_fields_to_excel(fields: list[Field]) -> io.BytesIO:
     wb = openpyxl.Workbook()
     ws = wb.active

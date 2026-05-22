@@ -1,8 +1,10 @@
+import io
 import math
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
@@ -12,6 +14,7 @@ from app.models.user import User
 from app.models.field import Field
 from app.models.directory import Directory
 from app.models.mapping import DirectoryFieldMapping
+from app.models.review_record import ReviewRecord
 from app.schemas.mapping import (
     MappingCreate,
     MappingBatchCreate,
@@ -25,6 +28,7 @@ from app.schemas.mapping import (
 )
 from app.schemas.common import PaginatedResponse
 from app.services.llm_service import auto_map_fields
+from app.services.excel_service import export_mappings_to_excel
 
 router = APIRouter(prefix="/api/mappings", tags=["Mappings"])
 
@@ -243,38 +247,57 @@ def trigger_auto_map(
                 _tasks[task_id] = {"status": "completed", "total_fields": 0, "mapped_count": 0, "results": []}
                 return
 
+            # Exclude fields that already have pending AI mapping reviews
+            pending_review_ids = {
+                r.field_id for r in new_db.query(ReviewRecord).filter(
+                    ReviewRecord.review_type == "ai_mapping",
+                    ReviewRecord.review_status == "pending",
+                ).all()
+            }
+            unmapped = [f for f in unmapped if f.id not in pending_review_ids]
+
+            if not unmapped:
+                _tasks[task_id] = {"status": "completed", "total_fields": 0, "mapped_count": 0, "results": []}
+                return
+
             fields_data = [{"id": f.id, "name": f.name, "data_type": f.data_type, "table_name": f.table_name, "business_domain": f.business_domain, "description": f.description} for f in unmapped[:50]]
             dirs_data = [{"id": d.id, "name": d.name, "code": d.code, "level": d.level, "description": d.description, "tags": d.tags} for d in dirs]
 
             suggestions = auto_map_fields(fields_data, dirs_data)
 
-            applied = 0
+            created = 0
             for s in suggestions:
                 fid = s.get("field_id")
                 did = s.get("directory_id")
                 conf = s.get("confidence", 0.5)
+                reason = s.get("reason", "")
 
                 if fid and did:
-                    exists = new_db.query(DirectoryFieldMapping).filter(
-                        DirectoryFieldMapping.field_id == fid,
-                        DirectoryFieldMapping.directory_id == did,
-                    ).first()
-                    if not exists:
-                        new_db.add(DirectoryFieldMapping(
-                            directory_id=did,
-                            field_id=fid,
-                            mapping_source="ai_suggested",
-                            confidence=conf,
-                            created_by=current_user.id,
-                        ))
-                        applied += 1
+                    dir_obj = new_db.query(Directory).filter(Directory.id == did).first()
+                    field_obj = new_db.query(Field).filter(Field.id == fid).first()
+                    if not dir_obj or not field_obj:
+                        continue
+
+                    new_db.add(ReviewRecord(
+                        field_id=fid,
+                        review_type="ai_mapping",
+                        review_status="pending",
+                        original_data=json.dumps({
+                            "suggested_directory_id": did,
+                            "directory_name": dir_obj.name,
+                            "directory_code": dir_obj.code,
+                            "confidence": conf,
+                            "reason": reason,
+                        }, ensure_ascii=False),
+                    ))
+                    created += 1
 
             new_db.commit()
 
             _tasks[task_id] = {
                 "status": "completed",
                 "total_fields": len(unmapped),
-                "mapped_count": applied,
+                "mapped_count": created,
                 "results": suggestions,
             }
         except Exception as e:
@@ -313,4 +336,19 @@ def get_ai_suggestions(
         page=page,
         page_size=page_size,
         total_pages=math.ceil(total / page_size) if total > 0 else 0,
+    )
+
+
+@router.get("/export")
+def export_mappings(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    mappings = db.query(DirectoryFieldMapping).order_by(DirectoryFieldMapping.created_at.desc()).all()
+    data = [_build_detail(m, db) for m in mappings]
+    excel_bytes = export_mappings_to_excel(data)
+    return StreamingResponse(
+        io.BytesIO(excel_bytes.getvalue()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=mappings_export.xlsx"},
     )

@@ -6,14 +6,14 @@ from app.core.config import settings
 
 def get_client():
     return OpenAI(
-        api_key=settings.DEEPSEEK_API_KEY,
-        base_url="https://api.deepseek.com/v1",
+        api_key=settings.DASHSCOPE_API_KEY,
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     )
 
 
 def auto_map_fields(fields_data: list[dict], directories_data: list[dict]) -> list[dict]:
     """
-    Use DeepSeek to automatically map fields to directories.
+    Use Qwen (通义千问) to automatically map fields to directories.
     Returns a list of suggested mappings: [{field_id, directory_id, confidence, reason}]
     """
     if not fields_data or not directories_data:
@@ -44,7 +44,7 @@ def auto_map_fields(fields_data: list[dict], directories_data: list[dict]) -> li
 
     client = get_client()
     response = client.chat.completions.create(
-        model="deepseek-chat",
+        model="qwen-plus",
         messages=[
             {"role": "system", "content": "You are a data management expert. Always respond with valid JSON only."},
             {"role": "user", "content": prompt},
