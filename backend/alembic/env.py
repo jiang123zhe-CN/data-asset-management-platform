@@ -21,6 +21,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.core.database import Base
 from app.models.user import User
+from app.models.directory import Directory
+from app.models.field import Field, ImportRecord
+from app.models.mapping import DirectoryFieldMapping
+from app.models.standard import ClassificationCategory, TieringRule
+from app.models.review_record import ReviewRecord
+from app.models.operation_log import OperationLog
+from app.models.datasource import DataSource
+from app.models.tagging import TaggingHistory
+from app.models.finance_category import FinanceDataCategory, FinanceGradingRule
 
 target_metadata = Base.metadata
 

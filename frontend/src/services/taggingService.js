@@ -1,7 +1,7 @@
 import api from './api'
 
 export function getTaggingStats() {
-  return api.get('/tagging/stats').then(res => res.data)
+  return api.get('/tagging/stats/').then(res => res.data)
 }
 
 export function getTaggingResults(params) {

@@ -137,19 +137,11 @@ def import_fields(db: Session, file: BinaryIO, user: User, file_name: str, file_
     db.commit()
     db.refresh(import_record)
 
-    # Auto-classify all newly imported fields via rule engine
+    # Auto-classify all newly imported fields via compliance engine
     if new_field_ids:
-        from app.services.rule_engine import RuleEngine
-        engine = RuleEngine(db)
-        for fid in new_field_ids:
-            field = db.query(Field).filter(Field.id == fid).first()
-            if field:
-                result = engine.classify_field(field)
-                if result["category_id"] or result["tier_level"]:
-                    field.classification_id = result.get("category_id") or field.classification_id
-                    field.sensitivity_level = result.get("tier_level") or field.sensitivity_level
-                    field.tagging_method = "rule_engine"
-                    field.tagging_confidence = result.get("confidence", 0.0)
+        from app.services.compliance_engine import ComplianceEngine
+        comp = ComplianceEngine(db)
+        comp.classify_fields(new_field_ids)
         db.commit()
 
     return import_record

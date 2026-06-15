@@ -27,6 +27,8 @@ class Field(Base):
     source = Column(String(20), nullable=False, default="manual")
     import_batch_id = Column(Integer, ForeignKey("import_records.id"), nullable=True)
     classification_id = Column(Integer, ForeignKey("classification_categories.id"), nullable=True)
+    finance_category_id = Column(Integer, ForeignKey("finance_data_categories.id"), nullable=True)  # 金融合规67类分类
+    finance_data_level = Column(String(20), nullable=True)  # core/important/sensitive/normal 金融合规四级
     tagging_method = Column(String(50), nullable=True)
     tagging_confidence = Column(Float, nullable=True)
     last_tagged_at = Column(DateTime, nullable=True)

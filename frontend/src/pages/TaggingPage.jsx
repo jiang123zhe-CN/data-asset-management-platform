@@ -1,22 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Row, Col, Card, Typography, Button, Space, message, Table, Tag, Select,
-  Drawer, Form, InputNumber, Progress, Statistic, Popconfirm, Divider,
+  Drawer, Form, Progress, Statistic, Divider, InputNumber,
 } from 'antd'
 import {
   ThunderboltOutlined, RobotOutlined, RocketOutlined, EditOutlined,
-  HistoryOutlined, ReloadOutlined, CheckCircleOutlined, CloseCircleOutlined,
+  HistoryOutlined, ReloadOutlined, SafetyOutlined,
 } from '@ant-design/icons'
 import { getTaggingStats, getTaggingResults, triggerTagging, getTaggingTaskStatus,
          manualUpdateTagging, getTaggingHistory } from '../services/taggingService'
-import { getCategories } from '../services/standardService'
+import { getFinanceCategories } from '../services/standardService'
 import { useAuth } from '../hooks/useAuth'
 
 const { Title, Text } = Typography
-const { Option } = Select
 
-const TIER_COLORS = { L1: 'green', L2: 'blue', L3: 'orange', L4: 'red' }
-const METHOD_LABELS = { rule_engine: '规则引擎', ai: 'AI辅助', manual: '人工', hybrid: '混合' }
+const METHOD_LABELS = { rule_engine: '规则引擎', ai: 'AI辅助', manual: '人工', hybrid: '混合', compliance_matrix: '合规矩阵' }
+const DATA_LEVEL_CONFIG = {
+  core: { color: 'red', label: '核心数据' },
+  important: { color: 'orange', label: '重要数据' },
+  sensitive: { color: 'gold', label: '敏感一般' },
+  normal: { color: 'green', label: '常规一般' },
+}
 
 export default function TaggingPage() {
   const { hasRole } = useAuth()
@@ -31,9 +35,8 @@ export default function TaggingPage() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingField, setEditingField] = useState(null)
   const [history, setHistory] = useState([])
-  const [categories, setCategories] = useState([])
+  const [categories, setCategories] = useState([])       // finance categories for edit
   const [submitting, setSubmitting] = useState(false)
-  const [selectedRows, setSelectedRows] = useState([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -51,10 +54,10 @@ export default function TaggingPage() {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    getCategories().then(setCategories).catch(() => {})
+    getFinanceCategories().then(setCategories).catch(() => {})
   }, [])
 
-  // Pipeline trigger
+  // Pipeline trigger (old rule/AI engine)
   const runPipeline = async (mode) => {
     setTaskRunning(true)
     try {
@@ -62,6 +65,19 @@ export default function TaggingPage() {
       setTaskId(task_id)
       pollTask(task_id)
     } catch { message.error('启动失败'); setTaskRunning(false) }
+  }
+
+  // Compliance classify (new matrix engine)
+  const runCompliance = async () => {
+    setTaskRunning(true)
+    try {
+      const { runComplianceClassify } = await import('../services/standardService')
+      const results = await runComplianceClassify(null)
+      message.success(`金融合规分类完成: ${results.length} 个字段`)
+      load()
+    } catch (err) {
+      message.error(err.response?.data?.detail || '合规分类失败')
+    } finally { setTaskRunning(false) }
   }
 
   const pollTask = (tid) => {
@@ -84,7 +100,7 @@ export default function TaggingPage() {
 
   // Manual edit
   const handleEdit = (record) => {
-    setEditingField(record)
+    setEditingField({ ...record })
     getTaggingHistory(record.id).then(setHistory).catch(() => setHistory([]))
     setDrawerOpen(true)
   }
@@ -93,8 +109,8 @@ export default function TaggingPage() {
     setSubmitting(true)
     try {
       await manualUpdateTagging(editingField.id, {
-        category_id: editingField.classification_id,
-        tier_level: editingField.sensitivity_level,
+        finance_category_id: editingField.finance_category_id,
+        finance_data_level: editingField.finance_data_level,
         confidence: editingField.tagging_confidence || 1.0,
         comment: '人工修正',
       })
@@ -105,18 +121,22 @@ export default function TaggingPage() {
     finally { setSubmitting(false) }
   }
 
+  const renderFinanceLevel = (v) => {
+    const cfg = DATA_LEVEL_CONFIG[v]
+    return cfg ? <Tag color={cfg.color}>{cfg.label}</Tag> : <Text type="secondary">-</Text>
+  }
+
   const columns = [
     { title: '字段编码', dataIndex: 'field_code', key: 'field_code', width: 110 },
     { title: '字段名称', dataIndex: 'name', key: 'name', width: 120 },
-    { title: '表名', dataIndex: 'table_name', key: 'table_name', width: 140, ellipsis: true },
-    { title: '业务域', dataIndex: 'business_domain', key: 'business_domain', width: 100 },
+    { title: '表名', dataIndex: 'table_name', key: 'table_name', width: 130, ellipsis: true },
     {
-      title: '分类', dataIndex: 'classification_name', key: 'classification_name', width: 130,
-      render: (v) => v ? <Tag color="blue">{v}</Tag> : <Text type="secondary">未分类</Text>,
+      title: '金融合规分类', dataIndex: 'finance_category_path', key: 'finance_category_path', width: 260, ellipsis: true,
+      render: (v) => v ? <Text style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary">未分类</Text>,
     },
     {
-      title: '分级', dataIndex: 'sensitivity_level', key: 'sensitivity_level', width: 80,
-      render: (v) => <Tag color={TIER_COLORS[v]}>{v}</Tag>,
+      title: '合规级别', dataIndex: 'finance_data_level', key: 'finance_data_level', width: 100,
+      render: renderFinanceLevel,
     },
     {
       title: '方法', dataIndex: 'tagging_method', key: 'tagging_method', width: 90,
@@ -138,7 +158,6 @@ export default function TaggingPage() {
     <div>
       <Title level={3}>数据打标</Title>
 
-      {/* Stats cards */}
       {stats && (
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col xs={12} sm={6}><Card><Statistic title="总字段" value={stats.total_fields} /></Card></Col>
@@ -148,46 +167,48 @@ export default function TaggingPage() {
         </Row>
       )}
 
-      {/* Action bar */}
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
-          <Button type="primary" icon={<ThunderboltOutlined />} loading={taskRunning}
-            onClick={() => runPipeline('rules_only')} disabled={taskRunning}>
-            运行规则引擎
+          <Button type="primary" icon={<SafetyOutlined />} loading={taskRunning}
+            onClick={runCompliance} disabled={taskRunning}>
+            金融合规分类（矩阵判定）
+          </Button>
+          <Divider type="vertical" />
+          <Button icon={<ThunderboltOutlined />} loading={taskRunning}
+            onClick={() => runPipeline('compliance')} disabled={taskRunning}>
+            合规矩阵
           </Button>
           <Button icon={<RobotOutlined />} loading={taskRunning}
             onClick={() => runPipeline('ai_only')} disabled={taskRunning}>
-            AI辅助分析
+            AI辅助
           </Button>
           <Button icon={<RocketOutlined />} loading={taskRunning}
             onClick={() => runPipeline('full')} disabled={taskRunning}>
-            全流水线
+            全流水线（矩阵+AI）
           </Button>
           <Divider type="vertical" />
-          <Select allowClear placeholder="分级筛选" style={{ width: 100 }}
-            value={filters.tier_level} onChange={(v) => setFilters(f => ({ ...f, tier_level: v, page: 1 }))}>
-            {['L1','L2','L3','L4'].map(t => <Option key={t} value={t}>{t}</Option>)}
+          <Select allowClear placeholder="合规级别" style={{ width: 120 }}
+            value={filters.finance_data_level} onChange={(v) => setFilters(f => ({ ...f, finance_data_level: v, page: 1 }))}>
+            {Object.entries(DATA_LEVEL_CONFIG).map(([k, cfg]) => <Select.Option key={k} value={k}>{cfg.label}</Select.Option>)}
           </Select>
           <Select allowClear placeholder="方法筛选" style={{ width: 120 }}
             value={filters.method} onChange={(v) => setFilters(f => ({ ...f, method: v, page: 1 }))}>
-            {Object.entries(METHOD_LABELS).map(([k, v]) => <Option key={k} value={k}>{v}</Option>)}
+            {Object.entries(METHOD_LABELS).map(([k, v]) => <Select.Option key={k} value={k}>{v}</Select.Option>)}
           </Select>
           <Select allowClear placeholder="标状态" style={{ width: 120 }}
             value={filters.is_tagged} onChange={(v) => setFilters(f => ({ ...f, is_tagged: v, page: 1 }))}>
-            <Option value={true}>已打标</Option>
-            <Option value={false}>未打标</Option>
+            <Select.Option value={true}>已打标</Select.Option>
+            <Select.Option value={false}>未打标</Select.Option>
           </Select>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
         </Space>
       </Card>
 
-      {/* Results table */}
       <Table
         columns={columns}
         dataSource={data.items}
         rowKey="id"
         loading={loading}
-        rowSelection={canEdit ? { selectedRowKeys: selectedRows, onChange: setSelectedRows } : undefined}
         pagination={{
           current: filters.page, pageSize: filters.page_size, total: data.total,
           onChange: (p, ps) => setFilters(f => ({ ...f, page: p, page_size: ps })),
@@ -195,7 +216,6 @@ export default function TaggingPage() {
         }}
       />
 
-      {/* Edit drawer */}
       <Drawer
         title={`修正打标: ${editingField?.field_code} ${editingField?.name}`}
         open={drawerOpen}
@@ -211,24 +231,36 @@ export default function TaggingPage() {
         {editingField && (
           <>
             <div style={{ marginBottom: 16 }}>
-              <Text strong>分类:</Text>
+              <Text strong>金融合规分类:</Text>
               <Select
                 style={{ width: '100%', marginTop: 4 }}
-                value={editingField.classification_id}
-                onChange={(v) => setEditingField(f => ({ ...f, classification_id: v }))}
+                value={editingField.finance_category_id}
+                allowClear
+                placeholder="选择67类金融标准分类"
+                onChange={(v) => setEditingField(f => ({ ...f, finance_category_id: v }))}
               >
-                <Option value={null}>未分类</Option>
-                {categories.map(c => <Option key={c.id} value={c.id}>{'  '.repeat(c.level)}{c.name}</Option>)}
+                {categories.filter(c => c.level === 3).map(c => (
+                  <Select.Option key={c.id} value={c.id}>
+                    <Tag color={DATA_LEVEL_CONFIG[c.ref_min_level]?.color} style={{ fontSize: 10 }}>
+                      {DATA_LEVEL_CONFIG[c.ref_min_level]?.label}
+                    </Tag>
+                    {c.code.includes('BIZ_MKT') ? '  ' : ''}{c.name}
+                  </Select.Option>
+                ))}
               </Select>
             </div>
             <div style={{ marginBottom: 16 }}>
-              <Text strong>分级:</Text>
+              <Text strong>合规数据级别:</Text>
               <Select
                 style={{ width: '100%', marginTop: 4 }}
-                value={editingField.sensitivity_level}
-                onChange={(v) => setEditingField(f => ({ ...f, sensitivity_level: v }))}
+                value={editingField.finance_data_level}
+                allowClear
+                placeholder="选择合规四级"
+                onChange={(v) => setEditingField(f => ({ ...f, finance_data_level: v }))}
               >
-                {['L1','L2','L3','L4'].map(t => <Option key={t} value={t}>{t}</Option>)}
+                {Object.entries(DATA_LEVEL_CONFIG).map(([k, cfg]) => (
+                  <Select.Option key={k} value={k}><Tag color={cfg.color}>{cfg.label}</Tag></Select.Option>
+                ))}
               </Select>
             </div>
             <div style={{ marginBottom: 16 }}>
@@ -246,7 +278,7 @@ export default function TaggingPage() {
               history.map(h => (
                 <Card key={h.id} size="small" style={{ marginBottom: 8 }}>
                   <p><Tag>{h.action}</Tag> <Text type="secondary">{h.created_at}</Text></p>
-                  {h.old_tier_level && <p>分级: <Tag color={TIER_COLORS[h.old_tier_level]}>{h.old_tier_level}</Tag> → <Tag color={TIER_COLORS[h.new_tier_level]}>{h.new_tier_level}</Tag></p>}
+                  {h.new_tier_level && <p>分级: {h.old_tier_level || '-'} → <Tag>{h.new_tier_level}</Tag></p>}
                   <p>方法: {METHOD_LABELS[h.tagging_method] || h.tagging_method} | 置信度: {h.new_confidence}</p>
                   {h.comment && <p><Text type="secondary">{h.comment}</Text></p>}
                 </Card>

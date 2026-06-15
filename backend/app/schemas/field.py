@@ -15,6 +15,8 @@ class FieldCreate(BaseModel):
     sensitivity_level: str = "L2"
     description: str | None = None
     business_rules: str | None = None
+    finance_category_id: int | None = None  # 金融合规67类分类
+    finance_data_level: str | None = None   # core/important/sensitive/normal
 
 
 class FieldUpdate(BaseModel):
@@ -31,6 +33,8 @@ class FieldUpdate(BaseModel):
     description: str | None = None
     business_rules: str | None = None
     status: str | None = None
+    finance_category_id: int | None = None
+    finance_data_level: str | None = None
 
 
 class FieldResponse(BaseModel):
@@ -51,6 +55,10 @@ class FieldResponse(BaseModel):
     is_anomaly: bool
     anomaly_type: str | None = None
     source: str
+    finance_category_id: int | None = None
+    finance_category_name: str | None = None
+    finance_category_path: str | None = None
+    finance_data_level: str | None = None
     created_by: int | None = None
     created_at: datetime
     updated_at: datetime

@@ -28,6 +28,7 @@ def list_fields(
     table_name: str | None = None,
     business_domain: str | None = None,
     sensitivity_level: str | None = None,
+    finance_data_level: str | None = None,
     is_anomaly: bool | None = None,
     status: str | None = None,
     page: int = Query(1, ge=1),
@@ -57,8 +58,10 @@ def list_fields(
         query = query.filter(Field.table_name.ilike(f"%{table_name}%"))
     if business_domain:
         query = query.filter(Field.business_domain == business_domain)
+    if finance_data_level:
+        query = query.filter(Field.finance_data_level == finance_data_level)
     if sensitivity_level:
-        query = query.filter(Field.sensitivity_level == sensitivity_level)
+        query = query.filter(Field.sensitivity_level == sensitivity_level)  # deprecated
     if is_anomaly is not None:
         query = query.filter(Field.is_anomaly == is_anomaly)
     if status:
@@ -73,8 +76,33 @@ def list_fields(
 
     items = query.offset((page - 1) * page_size).limit(page_size).all()
 
+    # Populate finance_category_name + path from finance_data_categories
+    from app.models.finance_category import FinanceDataCategory
+    fin_cat_ids = [f.finance_category_id for f in items if f.finance_category_id]
+    fin_cat_map: dict[int, str] = {}
+    fin_path_map: dict[int, str] = {}
+    if fin_cat_ids:
+        fin_cats = db.query(FinanceDataCategory).filter(FinanceDataCategory.id.in_(fin_cat_ids)).all()
+        fin_cat_map = {c.id: c.name for c in fin_cats}
+        all_fin = db.query(FinanceDataCategory).filter(FinanceDataCategory.is_active == True).all()
+        id_to_cat = {c.id: c for c in all_fin}
+        for c in fin_cats:
+            parts = [c.name]
+            pid = c.parent_id
+            while pid and pid in id_to_cat:
+                parts.append(id_to_cat[pid].name)
+                pid = id_to_cat[pid].parent_id
+            fin_path_map[c.id] = " > ".join(reversed(parts))
+
+    result_items = []
+    for f in items:
+        d = FieldResponse.model_validate(f)
+        d.finance_category_name = fin_cat_map.get(f.finance_category_id)
+        d.finance_category_path = fin_path_map.get(f.finance_category_id)
+        result_items.append(d)
+
     return PaginatedResponse(
-        items=[FieldResponse.model_validate(f) for f in items],
+        items=result_items,
         total=total,
         page=page,
         page_size=page_size,
@@ -96,24 +124,25 @@ def create_field(
     db.commit()
     db.refresh(field)
 
-    # Auto-classify via rule engine
-    from app.services.rule_engine import RuleEngine
-    engine = RuleEngine(db)
-    result = engine.classify_field(field)
-    if result["category_id"] or result["tier_level"]:
-        field.classification_id = result.get("category_id") or field.classification_id
-        field.sensitivity_level = result.get("tier_level") or field.sensitivity_level
-        field.tagging_method = "rule_engine"
-        field.tagging_confidence = result.get("confidence", 0.0)
-        field.last_tagged_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(field)
+    # Auto-classify via compliance engine (国信办通字〔2026〕2号)
+    from app.services.compliance_engine import ComplianceEngine
+    comp = ComplianceEngine(db)
+    comp.classify_fields([field.id])
+    db.refresh(field)
+    db.commit()
 
     log_action(db, user_id=current_user.id, username=current_user.username,
                action="create", module="fields", target_type="field", target_id=field.id,
                detail={"field_code": field.field_code, "name": field.name},
                ip_address=request.client.host if request else None)
-    return field
+
+    # Populate category name for response
+    resp = FieldResponse.model_validate(field)
+    if field.finance_category_id:
+        from app.models.finance_category import FinanceDataCategory
+        cat = db.query(FinanceDataCategory).filter(FinanceDataCategory.id == field.finance_category_id).first()
+        resp.finance_category_name = cat.name if cat else None
+    return resp
 
 
 @router.get("/{field_id}", response_model=FieldResponse)

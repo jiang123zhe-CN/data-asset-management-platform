@@ -1,58 +1,60 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Row, Col, Card, Typography, Button, Space, message, Popconfirm, Spin, Empty,
-  Tabs, Table, Tag, Drawer, Form, Input, Select, InputNumber, Upload, Divider,
+  Tabs, Table, Tag, Form, Input, Select, InputNumber, Descriptions, Alert, Statistic,
 } from 'antd'
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined,
-  SafetyOutlined, ApartmentOutlined,
+  EditOutlined, SafetyOutlined, ApartmentOutlined, ThunderboltOutlined,
+  WarningOutlined, CheckCircleOutlined,
 } from '@ant-design/icons'
-import buildTree from '../utils/buildTree'
 import {
-  getCategoryTree, getCategories, getCategory,
-  createCategory, updateCategory, deleteCategory,
-  exportCategories, importCategories,
-  getTiers, createTier, updateTier, deleteTier,
-  exportTiers, importTiers,
+  getFinanceCategories, getFinanceCategory, updateFinanceCategory,
+  getGradingMatrix, getGradingRules,
+  runComplianceClassify, getThresholdCheck,
 } from '../services/standardService'
 import { useAuth } from '../hooks/useAuth'
 
 const { Title, Text } = Typography
-const { TextArea } = Input
-const { Option } = Select
 
-// ── Tier level color mapping ──
-const TIER_COLORS = { L1: 'green', L2: 'blue', L3: 'orange', L4: 'red' }
-const TIER_NAMES = { L1: '公开', L2: '内部', L3: '敏感', L4: '机密/严格保密' }
-const CATEGORY_TYPES = [
-  { value: 'business', label: '业务分类' },
-  { value: 'regulatory', label: '监管分类' },
-  { value: 'technical', label: '技术分类' },
-]
+// ── Grading level display config ──
+const DATA_LEVEL_CONFIG = {
+  core: { color: 'red', label: '核心数据', desc: '对国家安全造成特别严重/严重危害' },
+  important: { color: 'orange', label: '重要数据', desc: '对经济运行/社会秩序/公共利益造成严重危害' },
+  sensitive: { color: 'gold', label: '敏感一般数据', desc: '对组织/个人权益造成严重危害' },
+  normal: { color: 'green', label: '常规一般数据', desc: '对组织/个人权益造成一般危害' },
+}
+
+const IMPACT_LABELS = {
+  national_security: '国家安全', economy: '经济运行', social_order: '社会秩序',
+  public_interest: '公共利益', org_rights: '组织权益', personal_rights: '个人权益',
+}
+const IMPACT_LEVEL_LABELS = {
+  extremely_serious: '特别严重', serious: '严重', general: '一般',
+}
+const DATA_TYPE_LABELS = { business: '业务数据', user: '用户数据', enterprise: '企业数据' }
 
 // ══════════════════════════════════════════════════════════════════
-// Categories Tab
+// Categories Tab — 67类金融标准分类
 // ══════════════════════════════════════════════════════════════════
 
 function CategoriesTab({ canEdit }) {
   const [flatList, setFlatList] = useState([])
-  const [selectedId, setSelectedId] = useState(null)
+  const [selectedL1, setSelectedL1] = useState(null)   // selected level-1 id
+  const [selectedL2, setSelectedL2] = useState(null)   // selected level-2 id
+  const [selectedId, setSelectedId] = useState(null)   // selected level-3 id (for detail)
   const [selectedCat, setSelectedCat] = useState(null)
   const [mode, setMode] = useState('view')
-  const [parentCat, setParentCat] = useState(null)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [form] = Form.useForm()
 
-  const treeData = buildTree(flatList)
-
   const loadTree = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await getCategoryTree()
+      const data = await getFinanceCategories()
       setFlatList(data)
     } catch {
-      message.error('加载分类标准失败')
+      message.error('加载金融分类标准失败')
     } finally {
       setLoading(false)
     }
@@ -62,69 +64,65 @@ function CategoriesTab({ canEdit }) {
 
   const loadDetail = async (id) => {
     try {
-      const data = await getCategory(id)
+      const data = await getFinanceCategory(id)
       setSelectedCat(data)
       setMode('view')
-      setParentCat(null)
     } catch {
       message.error('加载分类详情失败')
     }
   }
 
-  const handleSelect = (id) => {
+  // ── Data slices ──
+  const l1List = flatList.filter(c => c.level === 1)
+  const l2List = flatList.filter(c => c.level === 2 && c.parent_id === selectedL1)
+  const l3List = flatList.filter(c => c.level === 3 && c.parent_id === selectedL2)
+
+  // ── Selection handlers ──
+  const handleL1Click = (id) => {
+    setSelectedL1(id)
+    setSelectedL2(null)
+    setSelectedId(null)
+    setSelectedCat(null)
+  }
+
+  const handleL2Click = (id) => {
+    setSelectedL2(id)
+    setSelectedId(null)
+    setSelectedCat(null)
+  }
+
+  const handleL3Click = (id) => {
     setSelectedId(id)
     loadDetail(id)
   }
 
-  const handleCreate = (parentData = null) => {
-    setSelectedCat(null)
-    setParentCat(parentData)
-    setMode('create')
-    form.resetFields()
-    if (parentData) form.setFieldsValue({ parent_id: parentData.id })
-  }
+  // ── Build breadcrumb ──
+  const l1Item = flatList.find(c => c.id === selectedL1)
+  const l2Item = flatList.find(c => c.id === selectedL2)
 
   const handleEdit = () => {
     setMode('edit')
     form.setFieldsValue({
       name: selectedCat?.name,
       code: selectedCat?.code,
-      category_type: selectedCat?.category_type,
-      description: selectedCat?.description,
-      keywords: selectedCat?.keywords,
-      regulatory_ref: selectedCat?.regulatory_ref,
+      data_type: selectedCat?.data_type,
+      finance_product: selectedCat?.finance_product || undefined,
+      ref_min_level: selectedCat?.ref_min_level,
+      level_rationale: selectedCat?.level_rationale,
+      appendix_desc: selectedCat?.appendix_desc,
+      appendix_example: selectedCat?.appendix_example,
       sort_order: selectedCat?.sort_order,
     })
-  }
-
-  const handleDelete = async () => {
-    try {
-      await deleteCategory(selectedId)
-      message.success('分类已删除')
-      setSelectedId(null)
-      setSelectedCat(null)
-      setMode('view')
-      loadTree()
-    } catch (err) {
-      message.error(err.response?.data?.detail || '删除失败')
-    }
   }
 
   const handleSubmit = async () => {
     const values = await form.validateFields()
     setSubmitting(true)
     try {
-      if (mode === 'edit') {
-        await updateCategory(selectedId, values)
-        message.success('分类已更新')
-        loadDetail(selectedId)
-      } else {
-        await createCategory(values)
-        message.success('分类已创建')
-        setMode('view')
-        setParentCat(null)
-        loadTree()
-      }
+      await updateFinanceCategory(selectedId, values)
+      message.success('分类已更新')
+      loadDetail(selectedId)
+      loadTree()
     } catch (err) {
       message.error(err.response?.data?.detail || '操作失败')
     } finally {
@@ -132,166 +130,154 @@ function CategoriesTab({ canEdit }) {
     }
   }
 
-  const handleCancel = () => {
-    if (selectedCat) {
-      setMode('view')
-      setParentCat(null)
-    } else {
-      setSelectedCat(null)
-      setMode('view')
-      setParentCat(null)
-    }
-  }
+  const handleCancel = () => setMode('view')
 
-  const handleImport = async (info) => {
-    const file = info.file
-    if (!file) return
-    try {
-      const res = await importCategories(file)
-      message.success(`导入完成: 新增 ${res.created} 条`)
-      if (res.errors?.length) {
-        message.warning(`${res.errors.length} 条记录导入失败`)
-      }
-      loadTree()
-    } catch {
-      message.error('导入失败')
-    }
-  }
-
-  const renderCategoryTypeTag = (type) => {
-    const map = { business: { color: 'blue', label: '业务' }, regulatory: { color: 'gold', label: '监管' }, technical: { color: 'default', label: '技术' } }
-    const cfg = map[type] || { color: 'default', label: type }
+  const renderLevelTag = (level) => {
+    const cfg = DATA_LEVEL_CONFIG[level] || { color: 'default', label: level }
     return <Tag color={cfg.color}>{cfg.label}</Tag>
   }
 
-  // For the tree display, use antd Tree component
-  const renderTree = (nodes) => {
-    if (!nodes || nodes.length === 0) return null
-    return nodes.map(node => ({
-      key: node.id,
-      title: <span>{node.name} {renderCategoryTypeTag(node.category_type)}</span>,
-      children: node.children?.length ? renderTree(node.children) : undefined,
-    }))
-  }
-
-  const treeSelectData = renderTree(treeData)
+  // ── Render a cascading picker column ──
+  const renderColumn = (title, items, selectedId, onClick, placeholder, highlightColor = '#1677ff') => (
+    <div style={{ flex: 1, minWidth: 150, borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '8px 12px', fontWeight: 600, fontSize: 13, color: '#666', borderBottom: '1px solid #f0f0f0', background: '#fafafa', flexShrink: 0 }}>
+        {title} <Text type="secondary" style={{ fontWeight: 400 }}>({items.length})</Text>
+      </div>
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        {items.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>{placeholder}</div>
+        ) : (
+          items.map(item => {
+            const isSelected = item.id === selectedId
+            const hasChildren = flatList.some(c => c.parent_id === item.id)
+            return (
+              <div
+                key={item.id}
+                onClick={() => onClick(item.id)}
+                style={{
+                  padding: '8px 12px', cursor: 'pointer',
+                  background: isSelected ? '#e6f4ff' : 'transparent',
+                  borderLeft: isSelected ? `3px solid ${highlightColor}` : '3px solid transparent',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  fontSize: 13,
+                }}
+              >
+                <span>{item.name}</span>
+                <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color={DATA_LEVEL_CONFIG[item.ref_min_level]?.color}>
+                    {DATA_LEVEL_CONFIG[item.ref_min_level]?.label}
+                  </Tag>
+                  {hasChildren && <Text type="secondary" style={{ fontSize: 11 }}>{'>'}</Text>}
+                </span>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
 
   return (
     <Row gutter={16}>
-      <Col xs={24} md={7}>
+      <Col xs={24} md={14}>
         <Card
-          title="分类结构"
+          title={<span><ApartmentOutlined /> 金融数据分类标准</span>}
           extra={
-            canEdit && (
-              <Space size="small">
-                <Upload accept=".xlsx,.xls" showUploadList={false} customRequest={({ file }) => handleImport({ file })}>
-                  <Button size="small" icon={<UploadOutlined />} />
-                </Upload>
-                <Button size="small" icon={<DownloadOutlined />} onClick={exportCategories} />
-                <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => handleCreate()}>
-                  新建
-                </Button>
-              </Space>
-            )
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {l1Item ? `${l1Item.name} ${l2Item ? `> ${l2Item.name}` : ''}` : '选择一级分类开始'}
+            </Text>
           }
-          style={{ height: 'calc(100vh - 230px)', overflow: 'auto' }}
+          bodyStyle={{ padding: 0 }}
+          style={{ height: 'calc(100vh - 240px)' }}
         >
-          {loading ? <Spin /> : treeData.length === 0 ? (
-            <Empty description="暂无分类标准，请创建或导入" />
+          {loading ? <div style={{ padding: 40, textAlign: 'center' }}><Spin /></div> : flatList.length === 0 ? (
+            <Empty description="暂无分类标准" style={{ marginTop: 60 }} />
           ) : (
-            <div>
-              {flatList.map(cat => {
-                const indent = cat.level * 20
-                return (
-                  <div
-                    key={cat.id}
-                    onClick={() => handleSelect(cat.id)}
-                    style={{
-                      padding: '6px 12px', margin: '2px 0', cursor: 'pointer',
-                      borderRadius: 6, marginLeft: indent,
-                      background: selectedId === cat.id ? '#e6f4ff' : 'transparent',
-                      fontWeight: cat.level === 0 ? 500 : 400,
-                    }}
-                  >
-                    <ApartmentOutlined style={{ marginRight: 6, color: cat.level === 0 ? '#1677ff' : '#999' }} />
-                    {cat.name}
-                    {renderCategoryTypeTag(cat.category_type)}
-                  </div>
-                )
-              })}
+            <div style={{ display: 'flex', height: '100%' }}>
+              {renderColumn('一级分类', l1List, selectedL1, handleL1Click, '← 请选择', '#1677ff')}
+              {renderColumn('二级分类', l2List, selectedL2, handleL2Click, selectedL1 ? '无二级分类' : '← 先选一级', '#722ed1')}
+              {renderColumn('三级分类', l3List, selectedId, handleL3Click, selectedL2 ? '无三级分类' : '← 先选二级', '#fa8c16')}
             </div>
           )}
         </Card>
       </Col>
-      <Col xs={24} md={17}>
+      <Col xs={24} md={10}>
         <Card
-          title={
-            mode === 'create'
-              ? parentCat ? `添加子分类: ${parentCat.name}` : '新建根分类'
-              : mode === 'edit' ? '编辑分类' : '分类详情'
-          }
+          title={mode === 'edit' ? '编辑分类' : '分类详情'}
           extra={
             mode === 'view' && selectedCat && canEdit && (
-              <Space>
-                <Button icon={<PlusOutlined />} onClick={() => handleCreate(selectedCat)}>添加子分类</Button>
-                <Button icon={<EditOutlined />} onClick={handleEdit}>编辑</Button>
-                <Popconfirm title="确定删除此分类？有子分类时不可删除" onConfirm={handleDelete}>
-                  <Button danger icon={<DeleteOutlined />}>删除</Button>
-                </Popconfirm>
-              </Space>
+              <Button size="small" icon={<EditOutlined />} onClick={handleEdit}>编辑</Button>
             )
           }
+          style={{ height: 'calc(100vh - 240px)', overflow: 'auto' }}
         >
           {mode === 'view' && selectedCat ? (
-            <div>
-              <p><Text strong>名称：</Text>{selectedCat.name}</p>
-              <p><Text strong>编码：</Text><Tag>{selectedCat.code}</Tag></p>
-              <p><Text strong>分类类型：</Text>{renderCategoryTypeTag(selectedCat.category_type)}</p>
-              <p><Text strong>层级：</Text>{selectedCat.level}</p>
-              <p><Text strong>版本：</Text>{selectedCat.version}</p>
-              <p><Text strong>描述：</Text>{selectedCat.description || '-'}</p>
-              <p><Text strong>关键词：</Text>{selectedCat.keywords || '-'}</p>
-              <p><Text strong>法规依据：</Text>{selectedCat.regulatory_ref || '-'}</p>
-              <p><Text strong>排序：</Text>{selectedCat.sort_order}</p>
-            </div>
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label="名称">{selectedCat.name}</Descriptions.Item>
+              <Descriptions.Item label="编码"><Tag>{selectedCat.code}</Tag></Descriptions.Item>
+              <Descriptions.Item label="层级">
+                <Tag color={selectedCat.level === 1 ? 'blue' : selectedCat.level === 2 ? 'purple' : 'default'}>
+                  {selectedCat.level === 1 ? '一级' : selectedCat.level === 2 ? '二级' : '三级'}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="数据类型">{DATA_TYPE_LABELS[selectedCat.data_type] || selectedCat.data_type}</Descriptions.Item>
+              {selectedCat.finance_product && (
+                <Descriptions.Item label="金融产品">{selectedCat.finance_product}</Descriptions.Item>
+              )}
+              <Descriptions.Item label="参考最低级别">{renderLevelTag(selectedCat.ref_min_level)}</Descriptions.Item>
+              {l1Item && <Descriptions.Item label="所属一级">{l1Item.name}</Descriptions.Item>}
+              {l2Item && <Descriptions.Item label="所属二级">{l2Item.name}</Descriptions.Item>}
+              <Descriptions.Item label="标准依据">{selectedCat.standard_ref || '国信办通字〔2026〕2号'}</Descriptions.Item>
+              {selectedCat.appendix_desc && (
+                <Descriptions.Item label="附录描述">{selectedCat.appendix_desc}</Descriptions.Item>
+              )}
+              {selectedCat.appendix_example && (
+                <Descriptions.Item label="数据示例">{selectedCat.appendix_example}</Descriptions.Item>
+              )}
+              {selectedCat.level_rationale && (
+                <Descriptions.Item label="分级理由"><Text type="warning">{selectedCat.level_rationale}</Text></Descriptions.Item>
+              )}
+              <Descriptions.Item label="版本">{selectedCat.version}</Descriptions.Item>
+            </Descriptions>
           ) : mode === 'view' && !selectedCat ? (
-            <Empty description="请从左侧选择一个分类" />
+            <Empty description="点击三级分类查看详情" />
           ) : (
             <Form form={form} layout="vertical" onFinish={handleSubmit}>
-              <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+              <Form.Item name="name" label="名称" rules={[{ required: true }]}>
                 <Input maxLength={200} />
               </Form.Item>
-              <Form.Item name="code" label="编码" rules={[{ required: true, message: '请输入编码' }]}>
-                <Input maxLength={100} />
+              <Form.Item name="code" label="编码">
+                <Input disabled />
               </Form.Item>
-              <Form.Item name="parent_id" label="父级分类">
-                <Select allowClear placeholder="留空为根分类">
-                  {flatList.map(c => (
-                    <Option key={c.id} value={c.id} disabled={c.id === selectedId}>
-                      {'　'.repeat(c.level)}{c.name}
-                    </Option>
-                  ))}
+              <Form.Item name="data_type" label="数据类型">
+                <Select options={Object.entries(DATA_TYPE_LABELS).map(([v, l]) => ({ value: v, label: l }))} />
+              </Form.Item>
+              <Form.Item name="finance_product" label="金融产品">
+                <Select allowClear>
+                  <Select.Option value="stock">股票</Select.Option>
+                  <Select.Option value="bond">债券</Select.Option>
+                  <Select.Option value="fund">基金</Select.Option>
+                  <Select.Option value="forex">外汇</Select.Option>
+                  <Select.Option value="futures_option">期货期权</Select.Option>
                 </Select>
               </Form.Item>
-              <Form.Item name="category_type" label="分类类型" initialValue="business">
-                <Select options={CATEGORY_TYPES} />
+              <Form.Item name="ref_min_level" label="参考最低级别" rules={[{ required: true }]}>
+                <Select options={Object.entries(DATA_LEVEL_CONFIG).map(([v, cfg]) => ({ value: v, label: cfg.label }))} />
               </Form.Item>
-              <Form.Item name="keywords" label="关键词">
-                <Input placeholder="逗号分隔" />
+              <Form.Item name="level_rationale" label="分级理由">
+                <Input.TextArea rows={2} />
               </Form.Item>
-              <Form.Item name="description" label="描述">
-                <TextArea rows={2} />
+              <Form.Item name="appendix_desc" label="附录描述">
+                <Input.TextArea rows={2} />
               </Form.Item>
-              <Form.Item name="regulatory_ref" label="法规依据">
-                <Input placeholder="如 金融数据安全分级指南 JR/T 0197-2020" />
+              <Form.Item name="appendix_example" label="数据示例">
+                <Input />
               </Form.Item>
               <Form.Item name="sort_order" label="排序" initialValue={0}>
                 <InputNumber min={0} />
               </Form.Item>
               <Space>
-                <Button type="primary" htmlType="submit" loading={submitting}>
-                  {mode === 'edit' ? '保存' : '创建'}
-                </Button>
+                <Button type="primary" htmlType="submit" loading={submitting}>保存</Button>
                 <Button onClick={handleCancel}>取消</Button>
               </Space>
             </Form>
@@ -303,24 +289,22 @@ function CategoriesTab({ canEdit }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Tiers Tab
+// Grading Tab — 分级矩阵 + 参考最低级别
 // ══════════════════════════════════════════════════════════════════
 
-function TiersTab({ canEdit }) {
-  const [tiers, setTiers] = useState([])
+function GradingTab() {
+  const [matrix, setMatrix] = useState(null)
+  const [rules, setRules] = useState([])
   const [loading, setLoading] = useState(false)
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [editingTier, setEditingTier] = useState(null)
-  const [submitting, setSubmitting] = useState(false)
-  const [form] = Form.useForm()
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await getTiers()
-      setTiers(data)
+      const [m, r] = await Promise.all([getGradingMatrix(), getGradingRules()])
+      setMatrix(m)
+      setRules(r)
     } catch {
-      message.error('加载分级规则失败')
+      message.error('加载分级矩阵失败')
     } finally {
       setLoading(false)
     }
@@ -328,162 +312,217 @@ function TiersTab({ canEdit }) {
 
   useEffect(() => { load() }, [load])
 
-  const handleAdd = () => {
-    setEditingTier(null)
-    form.resetFields()
-    form.setFieldsValue({ rule_type: 'keyword', priority: 0, version: 'v1.0' })
-    setDrawerOpen(true)
-  }
+  // Build matrix table data
+  const impactTargets = matrix?.impact_targets || []
+  const impactLevels = matrix?.impact_levels || []
+  const matrixData = matrix?.matrix || {}
 
-  const handleEdit = (record) => {
-    setEditingTier(record)
-    form.setFieldsValue(record)
-    setDrawerOpen(true)
-  }
+  const matrixColumns = [
+    { title: '影响对象 \\ 危害程度', dataIndex: 'target', key: 'target', width: 120, fixed: 'left',
+      render: (v) => <Text strong>{IMPACT_LABELS[v] || v}</Text> },
+    ...impactLevels.map(level => ({
+      title: IMPACT_LEVEL_LABELS[level] || level,
+      dataIndex: level,
+      key: level,
+      width: 140,
+      render: (val) => {
+        const cfg = DATA_LEVEL_CONFIG[val]
+        return val ? <Tag color={cfg?.color} style={{ fontSize: 13, padding: '4px 12px' }}>{cfg?.label || val}</Tag> : <Tag>—</Tag>
+      },
+    })),
+  ]
 
-  const handleDelete = async (id) => {
-    try {
-      await deleteTier(id)
-      message.success('规则已删除')
-      load()
-    } catch (err) {
-      message.error(err.response?.data?.detail || '删除失败')
-    }
-  }
+  const matrixRows = impactTargets.map(target => {
+    const row = { key: target, target }
+    impactLevels.forEach(level => {
+      row[level] = matrixData[`${target}/${level}`] || null
+    })
+    return row
+  })
 
-  const handleSubmit = async () => {
-    const values = await form.validateFields()
-    setSubmitting(true)
-    try {
-      if (editingTier) {
-        await updateTier(editingTier.id, values)
-        message.success('规则已更新')
-      } else {
-        await createTier(values)
-        message.success('规则已创建')
-      }
-      setDrawerOpen(false)
-      load()
-    } catch (err) {
-      message.error(err.response?.data?.detail || '操作失败')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const handleImport = async (info) => {
-    const file = info.file
-    if (!file) return
-    try {
-      const res = await importTiers(file)
-      message.success(`导入完成: 新增 ${res.created} 条`)
-      load()
-    } catch {
-      message.error('导入失败')
-    }
-  }
-
-  const columns = [
-    { title: '级别', dataIndex: 'tier_level', key: 'tier_level', width: 80,
-      render: (v) => <Tag color={TIER_COLORS[v]}>{v}</Tag> },
-    { title: '名称', dataIndex: 'tier_name', key: 'tier_name', width: 120 },
-    { title: '规则类型', dataIndex: 'rule_type', key: 'rule_type', width: 100,
+  const rulesColumns = [
+    { title: '影响对象', dataIndex: 'impact_target', key: 'impact_target', width: 120,
+      render: (v) => IMPACT_LABELS[v] || v },
+    { title: '危害程度', dataIndex: 'impact_level', key: 'impact_level', width: 100,
+      render: (v) => IMPACT_LEVEL_LABELS[v] || v },
+    { title: '判定级别', dataIndex: 'data_level', key: 'data_level', width: 130,
       render: (v) => {
-        const labels = { keyword: '关键词', regex: '正则', metadata: '元数据' }
-        return <Tag>{labels[v] || v}</Tag>
-      }},
-    { title: '规则内容', dataIndex: 'rule_content', key: 'rule_content', ellipsis: true,
-      render: (v) => {
-        try {
-          const obj = JSON.parse(v)
-          return <Text style={{ fontSize: 12 }}>{JSON.stringify(obj).substring(0, 80)}...</Text>
-        } catch { return <Text style={{ fontSize: 12 }}>{v?.substring(0, 80)}</Text> }
+        const cfg = DATA_LEVEL_CONFIG[v]
+        return <Tag color={cfg?.color}>{cfg?.label || v}</Tag>
       }},
     { title: '优先级', dataIndex: 'priority', key: 'priority', width: 80 },
-    { title: '法规依据', dataIndex: 'regulatory_basis', key: 'regulatory_basis', ellipsis: true, width: 200 },
-    { title: '版本', dataIndex: 'version', key: 'version', width: 80 },
-    ...(canEdit ? [{
-      title: '操作', key: 'actions', width: 120,
-      render: (_, record) => (
-        <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
-          <Popconfirm title="确定删除此规则？" onConfirm={() => handleDelete(record.id)}>
-            <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
-        </Space>
-      ),
-    }] : []),
+    { title: '说明', dataIndex: 'description', key: 'description', ellipsis: true },
   ]
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <Space>
-          <SafetyOutlined /> 共 {tiers.length} 条分级规则
-        </Space>
-        {canEdit && (
-          <Space>
-            <Upload accept=".xlsx,.xls" showUploadList={false} customRequest={({ file }) => handleImport({ file })}>
-              <Button icon={<UploadOutlined />}>导入</Button>
-            </Upload>
-            <Button icon={<DownloadOutlined />} onClick={exportTiers}>导出</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新建规则</Button>
-          </Space>
-        )}
-      </div>
-      <Table
-        columns={columns}
-        dataSource={tiers}
-        rowKey="id"
-        loading={loading}
-        pagination={false}
+      <Alert
+        message="分级判定方法"
+        description="先确定数据涉及的影响对象（国家安全/经济运行/社会秩序/公共利益/组织权益/个人权益）和可能的危害程度（特别严重/严重/一般），然后在矩阵中查找对应的数据级别。实际级别 ≥ 参考最低级别（只能上调不能下调）。"
+        type="info" showIcon style={{ marginBottom: 16 }}
       />
-      <Drawer
-        title={editingTier ? '编辑分级规则' : '新建分级规则'}
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        width={560}
+
+      <Title level={5}>分级判定矩阵（18格）</Title>
+      <Table
+        columns={matrixColumns}
+        dataSource={matrixRows}
+        pagination={false}
+        loading={loading}
+        bordered
+        style={{ marginBottom: 24 }}
+        scroll={{ x: 600 }}
+      />
+
+      <Title level={5}>矩阵规则明细（{rules.length} 条）</Title>
+      <Table
+        columns={rulesColumns}
+        dataSource={rules}
+        rowKey="id"
+        pagination={false}
+        loading={loading}
+      />
+
+      <Card title="关键原则" style={{ marginTop: 24 }}>
+        <Descriptions column={1} size="small">
+          <Descriptions.Item label="就高从严">
+            一个数据集（表）的安全级别 = 该表所有字段中的最高级别。即使只有一个字段是核心/重要级别，整张表按最高级别保护。
+          </Descriptions.Item>
+          <Descriptions.Item label="级别不可降">
+            实际分级必须 ≥ 附录A参考最低级别，只能上调不能下调。
+          </Descriptions.Item>
+          <Descriptions.Item label="30%变化阈值">
+            核心数据和重要数据的条目数量或存储总量变化超过30%时，必须重新报送重要数据目录。
+          </Descriptions.Item>
+        </Descriptions>
+      </Card>
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Classify Tab — 执行合规分类
+// ══════════════════════════════════════════════════════════════════
+
+function ClassifyTab() {
+  const [results, setResults] = useState([])
+  const [threshold, setThreshold] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadThreshold = useCallback(async () => {
+    try {
+      const t = await getThresholdCheck()
+      setThreshold(t)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { loadThreshold() }, [loadThreshold])
+
+  const handleClassify = async () => {
+    setLoading(true)
+    try {
+      const data = await runComplianceClassify(null)
+      setResults(data)
+      message.success(`已完成 ${data.length} 个字段的合规分类分级`)
+      loadThreshold()
+    } catch (err) {
+      message.error(err.response?.data?.detail || '分类执行失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const columns = [
+    { title: '字段名', dataIndex: 'field_name', key: 'field_name', width: 120 },
+    { title: '金融分类', dataIndex: 'finance_category_name', key: 'category', width: 160,
+      render: (v, r) => v || <Tag>{r.finance_category_code}</Tag> },
+    { title: '数据级别', dataIndex: 'finance_data_level', key: 'level', width: 130,
+      render: (v) => {
+        const cfg = DATA_LEVEL_CONFIG[v]
+        return <Tag color={cfg?.color}>{cfg?.label || v}</Tag>
+      }},
+    { title: '参考最低级别', dataIndex: 'ref_min_level', key: 'ref', width: 130,
+      render: (v) => {
+        const cfg = DATA_LEVEL_CONFIG[v]
+        return <Tag color={cfg?.color}>{cfg?.label || v}</Tag>
+      }},
+    { title: '升级', dataIndex: 'level_upgraded', key: 'upgraded', width: 80,
+      render: (v, r) => v ? <Tag color="orange">已升级<Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{r.upgrade_reason?.substring(0, 40)}</Text></Tag> : <Tag>—</Tag> },
+    { title: '置信度', dataIndex: 'confidence', key: 'conf', width: 80,
+      render: (v) => `${(v * 100).toFixed(0)}%` },
+    { title: '方法', dataIndex: 'method', key: 'method', width: 120 },
+  ]
+
+  return (
+    <div>
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="核心数据"
+              value={threshold?.core_records || 0}
+              valueStyle={{ color: '#cf1322' }}
+              prefix={<WarningOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="重要数据"
+              value={threshold?.important_records || 0}
+              valueStyle={{ color: '#fa8c16' }}
+              prefix={<SafetyOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="关键数据合计"
+              value={threshold?.total_critical || 0}
+              valueStyle={{ color: '#1677ff' }}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="30%阈值"
+              value={threshold?.threshold_30pct || 0}
+              suffix="条"
+              valueStyle={{ color: threshold?.total_critical > 0 && (threshold?.total_critical || 0) > (threshold?.threshold_30pct || 0) ? '#fa8c16' : '#52c41a' }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Card
+        title={<span><ThunderboltOutlined /> 执行合规分类分级</span>}
         extra={
-          <Space>
-            <Button onClick={() => setDrawerOpen(false)}>取消</Button>
-            <Button type="primary" onClick={handleSubmit} loading={submitting}>保存</Button>
-          </Space>
+          <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleClassify} loading={loading}>
+            执行分类分级
+          </Button>
         }
       >
-        <Form form={form} layout="vertical">
-          <Form.Item name="tier_level" label="分级级别" rules={[{ required: true }]}>
-            <Select>
-              <Option value="L1">L1 - 公开</Option>
-              <Option value="L2">L2 - 内部</Option>
-              <Option value="L3">L3 - 敏感</Option>
-              <Option value="L4">L4 - 机密/严格保密</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="tier_name" label="分级名称" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="rule_type" label="规则类型" rules={[{ required: true }]}>
-            <Select>
-              <Option value="keyword">关键词匹配</Option>
-              <Option value="regex">正则表达式</Option>
-              <Option value="metadata">元数据匹配</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="rule_content" label="规则内容(JSON)" rules={[{ required: true }]}
-            extra='JSON格式: {"keywords":["关键词1","关键词2"],"patterns":["正则1"],"metadata_rules":{}}'>
-            <TextArea rows={6} />
-          </Form.Item>
-          <Form.Item name="priority" label="优先级">
-            <InputNumber min={0} max={100} />
-          </Form.Item>
-          <Form.Item name="regulatory_basis" label="法规依据">
-            <Input placeholder="如《个人信息保护法》第28条" />
-          </Form.Item>
-          <Form.Item name="version" label="版本" initialValue="v1.0">
-            <Input />
-          </Form.Item>
-        </Form>
-      </Drawer>
+        <Alert
+          message="按《金融信息服务数据分类分级指南》（国信办通字〔2026〕2号）对所有活跃字段执行四步判定"
+          description="① 匹配67类三级标准分类 → ② 按影响对象×危害程度矩阵判定数据级别 → ③ 应用就高从严原则（表级继承）→ ④ 结果持久化到字段。"
+          type="info" showIcon style={{ marginBottom: 16 }}
+        />
+
+        {results.length > 0 ? (
+          <Table
+            columns={columns}
+            dataSource={results}
+            rowKey="field_id"
+            pagination={false}
+            size="small"
+            scroll={{ x: 900 }}
+          />
+        ) : (
+          <Empty description="点击上方按钮，对所有活跃字段执行金融合规分类分级" />
+        )}
+      </Card>
     </div>
   )
 }
@@ -503,9 +542,14 @@ export default function StandardPage() {
       children: <CategoriesTab canEdit={canEdit} />,
     },
     {
-      key: 'tiers',
-      label: <span><SafetyOutlined /> 分级规则</span>,
-      children: <TiersTab canEdit={canEdit} />,
+      key: 'grading',
+      label: <span><SafetyOutlined /> 分级矩阵</span>,
+      children: <GradingTab />,
+    },
+    {
+      key: 'classify',
+      label: <span><ThunderboltOutlined /> 执行分类</span>,
+      children: <ClassifyTab />,
     },
   ]
 
@@ -513,7 +557,7 @@ export default function StandardPage() {
     <div>
       <Title level={3}>标准管理</Title>
       <Text type="secondary" style={{ marginBottom: 16, display: 'block' }}>
-        中国金融行业数据分类分级标准 — 支持标准模板导入/导出，快速适配监管要求
+        《金融信息服务数据分类分级指南》国信办通字〔2026〕2号 — 67类三级标准分类 + 18格矩阵判定
       </Text>
       <Tabs defaultActiveKey="categories" items={tabItems} />
     </div>

@@ -5,9 +5,10 @@ import FieldForm from '../components/field/FieldForm'
 import { getFields, createField, updateField, deleteField, importFields, downloadTemplate, exportFields, getImportHistory } from '../services/fieldService'
 import { useAuth } from '../hooks/useAuth'
 
-const { Title } = Typography
+const { Title, Text } = Typography
 
-const SENSITIVITY_COLORS = { L1: 'green', L2: 'blue', L3: 'orange', L4: 'red' }
+const DATA_LEVEL_COLORS = { core: 'red', important: 'orange', sensitive: 'gold', normal: 'green' }
+const DATA_LEVEL_LABELS = { core: '核心数据', important: '重要数据', sensitive: '敏感一般', normal: '常规一般' }
 
 export default function FieldPage() {
   const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 20 })
@@ -109,8 +110,12 @@ export default function FieldPage() {
       render: (v) => v || '-',
     },
     {
-      title: '敏感等级', dataIndex: 'sensitivity_level', key: 'sensitivity_level', width: 100,
-      render: (v) => <Tag color={SENSITIVITY_COLORS[v] || 'default'}>{v}</Tag>,
+      title: '金融合规分类', dataIndex: 'finance_category_path', key: 'finance_category_path', width: 240, ellipsis: true,
+      render: (v) => v ? <Text style={{ fontSize: 12 }}>{v}</Text> : <Tag>未分类</Tag>,
+    },
+    {
+      title: '合规级别', dataIndex: 'finance_data_level', key: 'finance_data_level', width: 110,
+      render: (v) => v ? <Tag color={DATA_LEVEL_COLORS[v]}>{DATA_LEVEL_LABELS[v] || v}</Tag> : <Tag>未分级</Tag>,
     },
     {
       title: '异常', dataIndex: 'is_anomaly', key: 'is_anomaly', width: 80,
@@ -152,15 +157,15 @@ export default function FieldPage() {
               allowClear
             />
             <Select
-              placeholder="敏感等级"
+              placeholder="合规级别"
               allowClear
-              style={{ width: 120 }}
-              onChange={(v) => setFilters((f) => ({ ...f, sensitivity_level: v }))}
+              style={{ width: 130 }}
+              onChange={(v) => setFilters((f) => ({ ...f, finance_data_level: v }))}
               options={[
-                { value: 'L1', label: 'L1-公开' },
-                { value: 'L2', label: 'L2-内部' },
-                { value: 'L3', label: 'L3-机密' },
-                { value: 'L4', label: 'L4-绝密' },
+                { value: 'core', label: '核心数据' },
+                { value: 'important', label: '重要数据' },
+                { value: 'sensitive', label: '敏感一般' },
+                { value: 'normal', label: '常规一般' },
               ]}
             />
             <Button icon={<ReloadOutlined />} onClick={() => loadData(1)}>刷新</Button>

@@ -89,3 +89,45 @@ export function importTiers(file) {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(res => res.data)
 }
+
+// ── Finance Compliance Categories (国信办通字〔2026〕2号) ──
+
+export function getFinanceCategoryTree() {
+  return api.get('/compliance/categories/tree').then(res => res.data)
+}
+
+export function getFinanceCategories(params) {
+  return api.get('/compliance/categories/', { params }).then(res => res.data)
+}
+
+export function getFinanceCategory(id) {
+  return api.get(`/compliance/categories/${id}`).then(res => res.data)
+}
+
+export function updateFinanceCategory(id, data) {
+  return api.put(`/compliance/categories/${id}`, data).then(res => res.data)
+}
+
+// ── Finance Grading Matrix ──
+
+export function getGradingMatrix() {
+  return api.get('/compliance/grading-rules/matrix').then(res => res.data)
+}
+
+export function getGradingRules() {
+  return api.get('/compliance/grading-rules/').then(res => res.data)
+}
+
+// ── Compliance Classification ──
+
+export function runComplianceClassify(fieldIds) {
+  return api.post('/compliance/classify', fieldIds ? { field_ids: fieldIds } : {}).then(res => res.data)
+}
+
+export function getThresholdCheck() {
+  return api.get('/compliance/threshold').then(res => res.data)
+}
+
+export function getTableLevel(tableName) {
+  return api.get('/compliance/table-level', { params: { table_name: tableName } }).then(res => res.data)
+}

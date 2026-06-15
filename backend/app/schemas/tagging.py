@@ -26,6 +26,10 @@ class TaggingFieldResponse(BaseModel):
     sensitivity_level: str
     classification_id: int | None = None
     classification_name: str | None = None
+    finance_category_id: int | None = None
+    finance_category_name: str | None = None
+    finance_category_path: str | None = None  # "业务数据 > 金融市场数据 > 股票数据"
+    finance_data_level: str | None = None
     tagging_method: str | None = None
     tagging_confidence: float | None = None
     last_tagged_at: datetime | None = None
@@ -36,15 +40,15 @@ class TaggingFieldResponse(BaseModel):
 
 class TaggingBatchUpdate(BaseModel):
     field_ids: list[int]
-    category_id: int | None = None
-    tier_level: str | None = None
+    finance_category_id: int | None = None
+    finance_data_level: str | None = None
     confidence: float = 1.0
     comment: str = ""
 
 
 class TaggingManualUpdate(BaseModel):
-    category_id: int | None = None
-    tier_level: str | None = None
+    finance_category_id: int | None = None
+    finance_data_level: str | None = None
     confidence: float = 1.0
     comment: str = ""
 

@@ -5,6 +5,7 @@ from app.models.directory import Directory
 from app.models.field import Field
 from app.models.mapping import DirectoryFieldMapping
 from app.models.standard import ClassificationCategory, TieringRule
+from app.models.finance_category import FinanceDataCategory, FinanceGradingRule
 import json
 
 
@@ -229,9 +230,297 @@ def seed():
             db.commit()
             print("Tiering rules seeded (L1-L4).")
 
+        # ── Finance Data Categories (67类) ──
+        if db.query(FinanceDataCategory).count() == 0:
+            _seed_finance_categories(db, admin.id)
+            print("Finance data categories seeded (67 classes).")
+
+        # ── Finance Grading Rules (矩阵规则) ──
+        if db.query(FinanceGradingRule).count() == 0:
+            _seed_grading_rules(db)
+            print("Finance grading rules seeded (18 matrix entries).")
+
         print("Seed completed.")
     finally:
         db.close()
+
+
+def _seed_finance_categories(db, user_id):
+    """Seed 67类金融信息服务数据分类（国信办通字〔2026〕2号 附录A）。"""
+    from app.models.finance_category import FinanceDataCategory as FDC
+
+    cats_data = [
+        # ═══ Level 1: 一级(3类) ═══
+        {"code": "FIN_BIZ", "name": "业务数据", "level": 1, "data_type": "business",
+         "ref_min_level": "normal", "sort_order": 100,
+         "standard_ref": "国信办通字〔2026〕2号"},
+        {"code": "FIN_USER", "name": "用户数据", "level": 1, "data_type": "user",
+         "ref_min_level": "sensitive", "sort_order": 200,
+         "standard_ref": "国信办通字〔2026〕2号"},
+        {"code": "FIN_ENT", "name": "企业数据", "level": 1, "data_type": "enterprise",
+         "ref_min_level": "sensitive", "sort_order": 300,
+         "standard_ref": "国信办通字〔2026〕2号"},
+
+        # ═══ Level 2: 二级(9类) ═══
+        # 业务数据 → 5个二级
+        {"code": "FIN_BIZ_MKT", "name": "金融市场数据", "level": 2, "data_type": "business",
+         "parent_code": "FIN_BIZ", "ref_min_level": "normal", "sort_order": 110,
+         "appendix_desc": "包括股票、债券、基金、外汇、商品、期货期权等交易和行情数据"},
+        {"code": "FIN_BIZ_MACRO", "name": "宏观经济数据", "level": 2, "data_type": "business",
+         "parent_code": "FIN_BIZ", "ref_min_level": "sensitive", "sort_order": 120,
+         "appendix_desc": "GDP、CPI、PMI、货币供应量等宏观经济指标数据"},
+        {"code": "FIN_BIZ_ORG", "name": "组织机构数据", "level": 2, "data_type": "business",
+         "parent_code": "FIN_BIZ", "ref_min_level": "normal", "sort_order": 130,
+         "appendix_desc": "金融机构、上市公司、发债主体等组织机构基本信息"},
+        {"code": "FIN_BIZ_IND", "name": "行业指标数据", "level": 2, "data_type": "business",
+         "parent_code": "FIN_BIZ", "ref_min_level": "normal", "sort_order": 140,
+         "appendix_desc": "各行业统计指标、景气指数、产能利用率等"},
+        {"code": "FIN_BIZ_REPORT", "name": "资讯报告数据", "level": 2, "data_type": "business",
+         "parent_code": "FIN_BIZ", "ref_min_level": "normal", "sort_order": 150,
+         "appendix_desc": "研究报告、新闻资讯、公告信息等"},
+
+        # 用户数据 → 2个二级
+        {"code": "FIN_USER_PERSONAL", "name": "个人用户数据", "level": 2, "data_type": "user",
+         "parent_code": "FIN_USER", "ref_min_level": "sensitive", "sort_order": 210},
+        {"code": "FIN_USER_ORG", "name": "机构用户数据", "level": 2, "data_type": "user",
+         "parent_code": "FIN_USER", "ref_min_level": "sensitive", "sort_order": 220},
+
+        # 企业数据 → 2个二级
+        {"code": "FIN_ENT_MGMT", "name": "经营管理数据", "level": 2, "data_type": "enterprise",
+         "parent_code": "FIN_ENT", "ref_min_level": "sensitive", "sort_order": 310},
+        {"code": "FIN_ENT_OPS", "name": "系统运维数据", "level": 2, "data_type": "enterprise",
+         "parent_code": "FIN_ENT", "ref_min_level": "important", "sort_order": 320},
+
+        # ═══ Level 3: 三级(核心金融产品分类 + 用户/企业明细) ═══
+        # ── 金融市场数据 (三级: 13个核心金融产品) ──
+        {"code": "FIN_BIZ_MKT_STOCK", "name": "股票数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "stock",
+         "ref_min_level": "normal", "sort_order": 111,
+         "appendix_desc": "股票基本资料、交易行情、股东股本、公告事项等",
+         "appendix_example": "股票发行信息、实时价格、成交量、成交额、K线数据、分红公告"},
+        {"code": "FIN_BIZ_MKT_BOND", "name": "债券数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "bond",
+         "ref_min_level": "normal", "sort_order": 112,
+         "appendix_desc": "债券基本信息、收益率曲线、评级、违约信息等",
+         "appendix_example": "国债收益率、信用债利差、久期、凸性"},
+        {"code": "FIN_BIZ_MKT_FUND", "name": "基金数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "fund",
+         "ref_min_level": "normal", "sort_order": 113,
+         "appendix_desc": "公募/私募基金净值、持仓、费率等",
+         "appendix_example": "基金单位净值、累计净值、持仓明细"},
+        {"code": "FIN_BIZ_MKT_FUND_PRIVATE", "name": "私募基金数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "fund",
+         "ref_min_level": "sensitive", "sort_order": 114,
+         "level_rationale": "未公开持仓信息，泄露影响投资者利益和市场公平",
+         "appendix_desc": "私募基金未公开持仓、策略参数等"},
+        {"code": "FIN_BIZ_MKT_FX", "name": "外汇数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "forex",
+         "ref_min_level": "sensitive", "sort_order": 115,
+         "level_rationale": "涉及人民币汇率未公开中间价可能影响经济运行",
+         "appendix_desc": "汇率行情、外汇交易、跨境资金流动数据",
+         "appendix_example": "人民币汇率中间价、即期/远期汇率、外汇储备"},
+        {"code": "FIN_BIZ_MKT_COMM", "name": "商品数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "commodity",
+         "ref_min_level": "normal", "sort_order": 116,
+         "appendix_desc": "大宗商品现货/期货价格、库存、供需数据"},
+        {"code": "FIN_BIZ_MKT_FUT", "name": "期货期权", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "futures_option",
+         "ref_min_level": "normal", "sort_order": 117,
+         "appendix_desc": "期货/期权合约信息、持仓量、保证金、行权数据"},
+        {"code": "FIN_BIZ_MKT_INDEX", "name": "指数数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "index",
+         "ref_min_level": "normal", "sort_order": 118,
+         "appendix_desc": "股票指数、债券指数、商品指数的编制和行情"},
+        {"code": "FIN_BIZ_MKT_RATE", "name": "利率数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "rate",
+         "ref_min_level": "sensitive", "sort_order": 119,
+         "level_rationale": "基准利率未公开变化可能影响经济运行",
+         "appendix_desc": "Shibor、LPR、国债收益率、互换利率等"},
+        {"code": "FIN_BIZ_MKT_CREDIT", "name": "信用数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "credit",
+         "ref_min_level": "sensitive", "sort_order": 120,
+         "level_rationale": "信用评级变化可能引起市场波动",
+         "appendix_desc": "主体评级、债项评级、违约概率、信用利差"},
+        {"code": "FIN_BIZ_MKT_DERIV", "name": "衍生品数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "derivative",
+         "ref_min_level": "normal", "sort_order": 121,
+         "appendix_desc": "期权、互换、远期等衍生品合约和定价数据"},
+        {"code": "FIN_BIZ_MKT_MONEY", "name": "货币市场数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "money_market",
+         "ref_min_level": "normal", "sort_order": 122,
+         "appendix_desc": "同业拆借、回购、存单等货币市场交易数据"},
+        {"code": "FIN_BIZ_MKT_ABS", "name": "资产证券化数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MKT", "finance_product": "abs",
+         "ref_min_level": "sensitive", "sort_order": 123,
+         "level_rationale": "底层资产池信息可能涉及大量个人数据",
+         "appendix_desc": "ABS/MBS/CLO产品信息、底层资产池、现金流分配"},
+
+        # ── 宏观经济数据 (三级: 4个) ──
+        {"code": "FIN_BIZ_MACRO_NAT", "name": "国民经济核算数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MACRO", "ref_min_level": "sensitive", "sort_order": 121,
+         "appendix_example": "GDP、国民总收入、投入产出表"},
+        {"code": "FIN_BIZ_MACRO_PRICE", "name": "价格指数数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MACRO", "ref_min_level": "sensitive", "sort_order": 122,
+         "appendix_example": "CPI、PPI、房价指数"},
+        {"code": "FIN_BIZ_MACRO_EMPLOY", "name": "就业与收入数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MACRO", "ref_min_level": "sensitive", "sort_order": 123,
+         "appendix_example": "城镇调查失业率、居民可支配收入"},
+        {"code": "FIN_BIZ_MACRO_TRADE", "name": "国际贸易与收支数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_MACRO", "ref_min_level": "sensitive", "sort_order": 124,
+         "appendix_example": "进出口总额、经常账户差额、外债余额"},
+
+        # ── 组织机构数据 (三级: 3个) ──
+        {"code": "FIN_BIZ_ORG_FIN", "name": "金融机构信息", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_ORG", "ref_min_level": "normal", "sort_order": 131,
+         "appendix_example": "银行、券商、保险、基金公司基本信息和牌照"},
+        {"code": "FIN_BIZ_ORG_LISTED", "name": "上市公司信息", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_ORG", "ref_min_level": "normal", "sort_order": 132,
+         "appendix_example": "上市公司基本信息、财务报告、重大事项"},
+        {"code": "FIN_BIZ_ORG_ISSUER", "name": "发债主体信息", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_ORG", "ref_min_level": "normal", "sort_order": 133,
+         "appendix_example": "债券发行人基本信息、财务数据、信用状况"},
+
+        # ── 行业指标数据 (三级: 2个) ──
+        {"code": "FIN_BIZ_IND_SECTOR", "name": "行业财务指标", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_IND", "ref_min_level": "normal", "sort_order": 141,
+         "appendix_example": "行业平均ROE、资产负债率、营收增速"},
+        {"code": "FIN_BIZ_IND_CLIMATE", "name": "行业景气指数", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_IND", "ref_min_level": "normal", "sort_order": 142,
+         "appendix_example": "PMI分行业、BCI、企业家信心指数"},
+
+        # ── 资讯报告数据 (三级: 2个) ──
+        {"code": "FIN_BIZ_REPORT_NEWS", "name": "金融资讯数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_REPORT", "ref_min_level": "normal", "sort_order": 151,
+         "appendix_example": "实时新闻、公告、舆情监测"},
+        {"code": "FIN_BIZ_REPORT_RESEARCH", "name": "研究报告数据", "level": 3, "data_type": "business",
+         "parent_code": "FIN_BIZ_REPORT", "ref_min_level": "normal", "sort_order": 152,
+         "appendix_example": "券商研报、行业分析、投资策略报告"},
+
+        # ── 个人用户数据 (三级: 3个) ──
+        {"code": "FIN_USER_PERSONAL_BASIC", "name": "个人基本信息", "level": 3, "data_type": "user",
+         "parent_code": "FIN_USER_PERSONAL", "ref_min_level": "sensitive", "sort_order": 211,
+         "appendix_desc": "姓名、证件号码、联系方式、地址、职业等",
+         "appendix_example": "身份证号、手机号、邮箱、居住地址、工作单位"},
+        {"code": "FIN_USER_PERSONAL_TXN", "name": "个人交易数据", "level": 3, "data_type": "user",
+         "parent_code": "FIN_USER_PERSONAL", "ref_min_level": "sensitive", "sort_order": 212,
+         "appendix_desc": "账户交易记录、持仓、资产、流水等",
+         "appendix_example": "证券交易记录、银行流水、基金申购赎回、保险保单"},
+        {"code": "FIN_USER_PERSONAL_BIO", "name": "生物特征识别信息", "level": 3, "data_type": "user",
+         "parent_code": "FIN_USER_PERSONAL", "ref_min_level": "important", "sort_order": 213,
+         "level_rationale": "生物特征不可更改，一旦泄露对个人权益造成严重危害",
+         "appendix_desc": "指纹、人脸、声纹、虹膜、基因等生物识别信息",
+         "appendix_example": "人脸图像、指纹模板、声纹特征向量"},
+
+        # ── 机构用户数据 (三级: 2个) ──
+        {"code": "FIN_USER_ORG_BASIC", "name": "机构基本信息", "level": 3, "data_type": "user",
+         "parent_code": "FIN_USER_ORG", "ref_min_level": "sensitive", "sort_order": 221,
+         "appendix_example": "机构名称、统一社会信用代码、法定代表人、注册资本"},
+        {"code": "FIN_USER_ORG_TXN", "name": "机构交易数据", "level": 3, "data_type": "user",
+         "parent_code": "FIN_USER_ORG", "ref_min_level": "sensitive", "sort_order": 222,
+         "appendix_example": "机构账户交易流水、持仓、授信额度"},
+
+        # ── 经营管理数据 (三级: 6个) ──
+        {"code": "FIN_ENT_MGMT_FIN", "name": "财务数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_MGMT", "ref_min_level": "sensitive", "sort_order": 311,
+         "appendix_example": "企业财务报表、科目余额、预算执行"},
+        {"code": "FIN_ENT_MGMT_SETTLE", "name": "结算管理数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_MGMT", "ref_min_level": "sensitive", "sort_order": 312,
+         "appendix_example": "清算指令、结算确认、资金划拨"},
+        {"code": "FIN_ENT_MGMT_HR", "name": "人力资源数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_MGMT", "ref_min_level": "sensitive", "sort_order": 313,
+         "appendix_example": "员工信息、薪酬、绩效"},
+        {"code": "FIN_ENT_MGMT_MKT", "name": "市场营销数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_MGMT", "ref_min_level": "sensitive", "sort_order": 314,
+         "appendix_example": "客户画像、营销活动、渠道数据"},
+        {"code": "FIN_ENT_MGMT_RISK", "name": "风险控制与监督数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_MGMT", "ref_min_level": "important", "sort_order": 315,
+         "level_rationale": "风控模型参数泄露可能影响金融体系稳定性",
+         "appendix_desc": "风控模型参数、策略规则、评级结果、预警信号",
+         "appendix_example": "模型权重、阈值、黑名单、可疑交易规则"},
+        {"code": "FIN_ENT_MGMT_OTHER", "name": "其他经营管理数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_MGMT", "ref_min_level": "normal", "sort_order": 316},
+
+        # ── 系统运维数据 (三级: 4个) ──
+        {"code": "FIN_ENT_OPS_CONFIG", "name": "配置数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_OPS", "ref_min_level": "important", "sort_order": 321,
+         "level_rationale": "网络拓扑、安全策略等配置信息泄露危害国家安全",
+         "appendix_example": "网络拓扑、系统参数、安全策略、访问控制列表"},
+        {"code": "FIN_ENT_OPS_LOG", "name": "日志数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_OPS", "ref_min_level": "sensitive", "sort_order": 322,
+         "appendix_example": "操作日志、访问日志、交易日志"},
+        {"code": "FIN_ENT_OPS_SECURITY", "name": "安全监测数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_OPS", "ref_min_level": "core", "sort_order": 323,
+         "level_rationale": "密钥、证书等信息泄露对国家安全造成特别严重危害",
+         "appendix_desc": "密钥、数字证书、加密算法、安全审计记录",
+         "appendix_example": "SSL证书、加密密钥、入侵检测记录"},
+        {"code": "FIN_ENT_OPS_EVENT", "name": "安全事件数据", "level": 3, "data_type": "enterprise",
+         "parent_code": "FIN_ENT_OPS", "ref_min_level": "important", "sort_order": 324,
+         "level_rationale": "安全事件详情泄露可能被利用发动进一步攻击",
+         "appendix_example": "攻击详情、漏洞信息、应急响应记录"},
+    ]
+
+    code_to_id: dict[str, int] = {}
+    for d in cats_data:
+        parent_id = code_to_id.get(d.get("parent_code", "")) if "parent_code" in d else None
+        level = d.get("level", 1 if "parent_code" not in d else 3)
+        obj = FDC(
+            code=d["code"], name=d["name"], level=level,
+            parent_id=parent_id,
+            data_type=d.get("data_type", "business"),
+            finance_product=d.get("finance_product"),
+            ref_min_level=d.get("ref_min_level", "normal"),
+            level_rationale=d.get("level_rationale"),
+            appendix_desc=d.get("appendix_desc"),
+            appendix_example=d.get("appendix_example"),
+            standard_ref=d.get("standard_ref", "国信办通字〔2026〕2号"),
+            version="2026-06",
+            sort_order=d.get("sort_order", 0),
+            created_by=user_id,
+        )
+        db.add(obj)
+        db.flush()  # 获取自增ID
+        code_to_id[d["code"]] = obj.id
+    db.commit()
+
+
+def _seed_grading_rules(db):
+    """Seed 18条分级矩阵规则（影响对象 × 危害程度 → 数据级别）。"""
+    from app.models.finance_category import FinanceGradingRule as FGR
+
+    rules = [
+        # 国家安全
+        ("national_security", "extremely_serious", "core", 100, "涉及国家安全的系统密钥、核心网络等"),
+        ("national_security", "serious", "core", 90, "涉及国防、关键基础设施的敏感配置"),
+        ("national_security", "general", "important", 80, "一般性国家安全相关数据"),
+        # 经济运行
+        ("economy", "extremely_serious", "core", 70, "影响国民经济命脉的核心数据"),
+        ("economy", "serious", "important", 60, "可能导致金融市场大幅波动的未公开数据"),
+        ("economy", "general", "sensitive", 50, "一般性经济运行相关数据"),
+        # 社会秩序
+        ("social_order", "extremely_serious", "core", 40, "涉及反恐、反洗钱等社会秩序核心数据"),
+        ("social_order", "serious", "important", 30, "涉及重大金融犯罪的监测数据"),
+        ("social_order", "general", "sensitive", 20, "一般性社会秩序相关数据"),
+        # 公共利益
+        ("public_interest", "extremely_serious", "core", 10, "涉及广大公众利益的核心数据"),
+        ("public_interest", "serious", "important", 9, "可能影响公众利益的未公开重大信息"),
+        ("public_interest", "general", "sensitive", 8, "一般性公共利益相关数据"),
+        # 组织权益
+        ("org_rights", "extremely_serious", "sensitive", 7, "对企业造成特别严重危害的数据泄露"),
+        ("org_rights", "serious", "sensitive", 6, "对企业造成严重危害的数据泄露"),
+        ("org_rights", "general", "normal", 5, "对企业造成一般危害的数据"),
+        # 个人权益
+        ("personal_rights", "extremely_serious", "sensitive", 4, "对个人造成特别严重危害的数据泄露（如生物特征）"),
+        ("personal_rights", "serious", "sensitive", 3, "对个人造成严重危害的数据泄露（如交易记录）"),
+        ("personal_rights", "general", "normal", 2, "对个人造成一般危害的数据"),
+    ]
+
+    for target, level, dlevel, priority, desc in rules:
+        db.add(FGR(
+            impact_target=target, impact_level=level, data_level=dlevel,
+            priority=priority, description=desc,
+            standard_ref="国信办通字〔2026〕2号 §5",
+        ))
+    db.commit()
 
 
 if __name__ == "__main__":
