@@ -15,63 +15,90 @@ npm install                                        # Install dependencies
 npm run dev                                        # Vite dev server on :5173
 npm run build                                      # Production build
 
-# Database migrations (from backend/)
-alembic revision --autogenerate -m "description"   # Generate new migration
-alembic upgrade head                               # Apply migrations
-alembic downgrade -1                               # Rollback one step
+# Deploy (from deploy/)
+bash deploy/deploy.sh                              # Full deploy to Alibaba Cloud (run as root on server)
 ```
 
 ## Architecture Overview
 
-**Stack**: FastAPI (Python) + React 19 + Ant Design 6 + SQLite + JWT auth.
+**Stack**: FastAPI (Python) + React 19 + Ant Design 6 + SQLite (dev) / PostgreSQL (prod) + JWT auth + DashScope AI
 
 **Request flow**: Browser → Vite dev server (`:5173`) → proxy `/api` → FastAPI (`:8000`). The Vite proxy rewrites 307 redirect Location headers so redirects don't bypass the proxy. The frontend axios interceptor proactively adds trailing slashes to avoid redirects.
 
-**Database**: SQLite with WAL mode enabled (`PRAGMA journal_mode=WAL`). On each connection: foreign keys are enforced and `busy_timeout=5000ms` prevents immediate locking errors. `check_same_thread=False` is set for FastAPI threading. Note: Alembic migration files exist but have empty bodies — actual schema management is done by `Base.metadata.create_all()` on startup (development only).
+**Database**: SQLite with WAL mode in dev; PostgreSQL on Alibaba Cloud. Alembic migration files exist but are empty — `Base.metadata.create_all()` handles schema management.
 
-**Auth**: JWT tokens (HS256, 30min) stored in `localStorage`. Five roles with hierarchical access: `admin` > `system_admin` > `data_admin` > `data_entry` > `reviewer`. The `require_role(*roles)` dependency factory checks permissions; routes declare minimum role required.
+**Auth**: JWT tokens (HS256, 30min) in `localStorage` key `dam_token`. Five roles: `admin` > `system_admin` > `data_admin` > `data_entry` > `reviewer`. Routes declare minimum role via `require_role(*roles)`.
+
+## Core Feature: 金融合规分类分级
+
+The platform implements the **《金融信息服务数据分类分级指南》** (国信办通字〔2026〕2号):
+
+### Data Model
+- `FinanceDataCategory` — 67-class 3-level standard (3 L1 → 9 L2 → 67 L3), self-referential `parent_id`
+- `FinanceGradingRule` — 18-grid matrix: impact target × impact level → data level
+- `ImportantDataSnapshot` — 30% change threshold tracking for core/important data
+- `Field` has `finance_category_id` + `finance_data_level` (core/important/sensitive/normal)
+
+### ComplianceEngine (`backend/app/services/compliance_engine.py`)
+5-layer matching pipeline:
+1. **Exact keywords** → `EXACT_MAP` dict, highest confidence (+20%)
+2. **Product signals** → financial product detection (stock/bond/fund/forex/…)
+3. **Domain mapping** → `business_domain` field → category
+4. **Fallback inference** → heuristic patterns (logs, personal info, transactions, …)
+5. **Traversal scoring** → substring match across all L3 categories
+
+Grading: impact target × impact level matrix → data level. Principles: 就高从严 (table-level max inheritance), 级别不可降 (no downgrade below ref_min_level).
+
+Confidence: `base 0.60 + cat_matched 0.10 + layer_bonus (0.20/0.15/0.10) + signal_bonus 0.05 + upgrade_bonus 0.05`, capped at 0.99.
+
+### Key Endpoints
+- `POST /api/compliance/classify` — Run compliance classification on all/selected fields
+- `GET /api/compliance/export/inventory` — Export §6.4 standard format Excel
+- `GET /api/compliance/threshold` — 30% change threshold check
+- `POST /api/compliance/threshold/snapshot` — Create baseline snapshot
+- `GET /api/tagging/export` — Export all tagging results Excel
+- `GET /api/fields` — Now includes `finance_category_path` (L1 > L2 > L3) + `finance_data_level`
+
+### Frontend Pages
+- `/standards` — **StandardPage**: 3 tabs: 分类标准 (3-column cascade picker), 分级矩阵 (18-grid table), 执行分类 (classify + export + threshold snapshots)
+- `/tagging` — **TaggingPage**: Tagging results with compliance path/level, export, manual correction drawer, multi-engine trigger
+- `/fields` — **FieldPage**: Fields table with compliance classification column + level filter
 
 ## Key Modules
 
 ### Backend Routers (prefixes)
 - `/api/auth` — Login, token refresh, password change
-- `/api/directories` — Tree CRUD. Self-referential `parent_id` builds a hierarchy. Directory tree has self-referential FK; delete blocked if children exist.
-- `/api/fields` — CRUD + Excel import/export. Supports filter by sensitivity, domain, anomaly, status. Soft-delete sets `status=inactive`.
-- `/api/mappings` — Many-to-many between directories ↔ fields via `directory_field_mappings` table. Supports batch create/delete, AI auto-map, ECharts visualization data, stats.
-- `/api/reviews` — Human review workflow. Two types: `anomaly` (auto-detected) and `ai_mapping` (AI suggestions). Approving an AI mapping creates the actual `DirectoryFieldMapping`.
-- `/api/reports` — Aggregation endpoints: summary stats, by-directory counts, by-sensitivity distribution, Excel exports.
-- `/api/users` — Admin-only user management. Reset password sets `admin123`.
-- `/api/logs` — Operation log query (log_service exists but is **not wired** into most CRUD routes — logs are not actively recorded).
+- `/api/compliance` — Finance compliance: categories tree, grading matrix, classify, export, threshold snapshots
+- `/api/directories` — Tree CRUD. Self-referential FK; delete blocked if children exist.
+- `/api/fields` — CRUD + Excel import/export. Auto-runs ComplianceEngine on create/import. Soft-delete via `status=inactive`.
+- `/api/mappings` — Many-to-many directories ↔ fields. AI auto-map only targets leaf directories (deepest level). Batch create/delete, ECharts visualization.
+- `/api/reviews` — Human review: `anomaly` (auto-detected) and `ai_mapping` (AI suggestions).
+- `/api/reports` — Aggregation: summary, by-directory, by-sensitivity distribution.
+- `/api/tagging` — Tagging pipeline: compliance matrix + AI. Stats, manual update, batch update, export.
+- `/api/users` — Admin-only user management.
+- `/api/logs` — Operation log query.
 
 ### Services
-- `llm_service.py` — Calls Qwen (`qwen-plus`) via DashScope API (OpenAI-compatible SDK). Sends directory tree + unmapped fields as Chinese prompt, parses JSON response.
-- `excel_service.py` — Template generation, parsing, and import orchestration with per-row validation.
-- `anomaly_detector.py` — Two rules: unmapped fields (no mapping exists) and missing info (null data_type/table_name/name). Creates `ReviewRecord` entries, marks `is_anomaly=True`.
-- `log_service.py` — Available but not imported in route handlers. To enable logging, import and call `log_action()` in each route.
-
-### Frontend Pages
-- `/` — Dashboard (stat cards + recent logs)
-- `/directories` — Tree view + detail/edit panel
-- `/fields` — Table with search/filter + drawer form + Excel import modal
-- `/mappings` — Tabs: list (with auto-map panel + batch dialog) + ECharts force graph
-- `/review` — Tabs: anomaly review + AI mapping review (approve/reject drawer)
-- `/users` — Admin-only user CRUD
-- `/logs` — Filterable log table with date range
-- `/reports` — Charts (bar, pie) + Excel exports
+- `compliance_engine.py` — 5-layer matching + matrix grading + 就高从严 (see above)
+- `tagging_service.py` — `TaggingPipeline`: "compliance" mode = ComplianceEngine only; "full" = compliance + AI fallback
+- `llm_service.py` — Qwen (`qwen-plus`) via DashScope API. AI auto-map + field classification.
+- `excel_service.py` — Template gen, import, export: fields, mappings, compliance inventory (§6.4), tagging results
+- `anomaly_detector.py` — Unmapped fields + missing metadata detection
+- `log_service.py` — Available but not wired into most CRUD routes.
 
 ## Patterns and Conventions
 
-- **No trailing slash on resource URL = 307 redirect**. The frontend interceptor adds `/` to single-segment URLs (e.g., `/fields` → `/fields/`) to avoid the redirect. If a redirect does fire, the Vite proxy rewrites the Location header to stay in-proxy.
-- **Soft deletion**: Fields set `status=inactive`; directories set `is_active=False`; users set `is_active=False`. No hard deletes.
-- **Idempotent seed**: `seed.py` checks counts before inserting — safe to run multiple times.
-- **AI is human-in-the-loop**: Auto-map creates `ReviewRecord` entries (not direct mappings). A reviewer must approve before the `DirectoryFieldMapping` is created.
-- **Frontend auth check**: `hasRole(...roles)` from `useAuth()` hook filters UI elements. `ProtectedRoute` handles redirect. Each page calls its data regardless of roles — the backend is the enforcement point.
-- **Config**: All settings in `app/core/config.py` via `pydantic-settings`, reads `.env`. API keys go in `.env`, never in code.
+- **Trailing slash**: Frontend interceptor adds `/` to single-segment URLs. All compliance/tagging routes have dual decorators (with/without trailing slash).
+- **Soft deletion**: Fields → `status=inactive`; directories → `is_active=False`; users → `is_active=False`.
+- **Idempotent seed**: `seed.py` checks counts before inserting — safe to run multiple times. Seeds finance categories (67 classes) + grading rules (18 matrix rows).
+- **AI is human-in-the-loop**: Auto-map creates `ReviewRecord` entries; reviewer must approve before mapping is created.
+- **Mappings go to leaf level**: Both batch dialog and AI auto-map only target leaf directories (no children).
+- **Compliance auto-classify**: New field creation and Excel import both auto-run ComplianceEngine.
 
 ## Gotchas
 
-- **Alembic migrations are empty**: `Base.metadata.create_all()` handles schema in dev. For production, populate migration bodies or switch to a proper migration workflow.
-- **Operation logging is not active**: `log_service.py` is defined but no CRUD route calls it. If audit logging matters, wire it into each route handler.
-- **SQLite in production**: WAL mode helps concurrency but single-server only. For multi-process deployment, switch to PostgreSQL.
-- **CORS is restrictive**: Only `localhost:5173` is allowed. If a different frontend port or domain is needed, update `allow_origins` in `main.py`.
-- **WAL files**: `*.db-*` is in `.gitignore`. WAL creates `-shm` and `-wal` files alongside the database — these are transient SQLite internals.
+- **Alembic migrations are empty**: Use `Base.metadata.create_all()` for schema in both dev and prod.
+- **New models must be imported before create_all()**: Add imports to `main.py` or the relevant API module's top level.
+- **Trailing slash = 307**: All compliance routes must have dual `@router.get("/path/")` + `@router.get("/path")` decorators.
+- **SQLite FK constraints**: `NoReferencedTableError` in standalone scripts means not all models are imported. Import `User` and all referenced models.
+- **CORS**: Only `localhost:5173` allowed in dev. Update for different port/domain.
