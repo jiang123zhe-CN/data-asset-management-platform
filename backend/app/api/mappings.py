@@ -261,7 +261,15 @@ def trigger_auto_map(
                 return
 
             fields_data = [{"id": f.id, "name": f.name, "data_type": f.data_type, "table_name": f.table_name, "business_domain": f.business_domain, "description": f.description} for f in unmapped[:50]]
-            dirs_data = [{"id": d.id, "name": d.name, "code": d.code, "level": d.level, "description": d.description, "tags": d.tags} for d in dirs]
+            # ① 只保留叶子节点（最深层级），确保映射到资产目录的最下面一级
+            leaf_dir_ids = {d.id for d in dirs if not any(
+                child.parent_id == d.id for child in dirs
+            )}
+            dirs_data = [
+                {"id": d.id, "name": d.name, "code": d.code, "level": d.level,
+                 "description": d.description, "tags": d.tags}
+                for d in dirs if d.id in leaf_dir_ids
+            ]
 
             suggestions = auto_map_fields(fields_data, dirs_data)
 

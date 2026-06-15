@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -235,4 +236,23 @@ def get_tagging_stats(db: Session = Depends(get_db), _: User = Depends(get_curre
     return TaggingStats(
         total_fields=total, classified_count=classified, unclassified_count=unclassified,
         coverage_pct=coverage, by_tier=by_tier, by_method=by_method, by_category=by_category,
+    )
+
+
+@router.get("/export/")
+@router.get("/export")
+def export_tagging_results(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """导出数据打标结果 Excel（全部活跃字段的合规分类+级别+方法+置信度）。"""
+    from app.services.excel_service import export_tagging_results as _export
+    output = _export(db)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": "attachment; filename=tagging_results_"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d')}.xlsx",
+        },
     )

@@ -153,6 +153,8 @@ class ComplianceEngine:
         统计 core + important 数据的条目数和存储量，
         与上次报送快照对比，超过 30% 则返回预警。
         """
+        from app.models.threshold import ImportantDataSnapshot
+
         core_count = self.db.query(Field).filter(
             Field.finance_data_level == "core", Field.status == "active"
         ).count()
@@ -161,17 +163,36 @@ class ComplianceEngine:
         ).count()
 
         total_critical = core_count + important_count
-        # 存储量简化为字段数（实际应结合数据源的总行数×平均字段大小）
-        storage_estimate = total_critical
+        storage_estimate = total_critical  # 存储量简化为字段数
+
+        # ① 对比上次快照，检测是否超30%
+        prev = (
+            self.db.query(ImportantDataSnapshot)
+            .filter(ImportantDataSnapshot.is_active == True)
+            .order_by(ImportantDataSnapshot.created_at.desc())
+            .first()
+        )
+
+        exceeds_threshold = False
+        change_pct = 0.0
+        if prev and prev.total_fields:
+            change_pct = abs(total_critical - prev.total_fields) / prev.total_fields
+            exceeds_threshold = change_pct > 0.3
 
         return {
             "core_records": core_count,
             "important_records": important_count,
             "total_critical": total_critical,
             "storage_estimate": storage_estimate,
-            "threshold_30pct": int(total_critical * 0.3),
+            "threshold_30pct": int(total_critical * 0.3) if total_critical > 0 else 0,
+            "exceeds_threshold": exceeds_threshold,
+            "change_pct": round(change_pct, 2),
+            "prev_total_critical": prev.total_fields if prev else None,
+            "prev_snapshot_id": prev.id if prev else None,
             "message": (
-                "重要数据目录需在变化超30%时重新报送" if total_critical > 0
+                f"核心/重要数据变化 {change_pct:.0%}, {'超过' if exceeds_threshold else '未超过'}30%阈值"
+                if prev
+                else "重要数据目录需在变化超30%时重新报送" if total_critical > 0
                 else "当前没有标记为核心/重要的数据字段"
             ),
         }
@@ -267,6 +288,9 @@ class ComplianceEngine:
             "股票": "FIN_BIZ_MKT_STOCK", "股价": "FIN_BIZ_MKT_STOCK",
             "基金": "FIN_BIZ_MKT_FUND", "债券": "FIN_BIZ_MKT_BOND",
             "期货": "FIN_BIZ_MKT_FUT", "期权": "FIN_BIZ_MKT_FUT",
+            "理财": "FIN_BIZ_MKT_FUND", "信托": "FIN_BIZ_MKT_FUND_PRIVATE",
+            "保险": "FIN_BIZ_MKT_ABS", "黄金": "FIN_BIZ_MKT_COMM",
+            "外汇": "FIN_BIZ_MKT_FX", "汇率": "FIN_BIZ_MKT_FX",
             # 系统运维
             "日志": "FIN_ENT_OPS_LOG", "操作日志": "FIN_ENT_OPS_LOG",
             "访问日志": "FIN_ENT_OPS_LOG", "错误日志": "FIN_ENT_OPS_LOG",
@@ -286,7 +310,7 @@ class ComplianceEngine:
         PRODUCT_SIGNALS: list[tuple[str, list[str]]] = [
             ("stock", ["股票", "Stock", "equity", "股东", "K线", "股本"]),
             ("bond", ["债券", "Bond", "fixed_income", "久期", "凸性"]),
-            ("fund", ["基金", "Fund", "净值"]),
+            ("fund", ["基金", "Fund", "净值", "理财", "理财产品"]),
             ("forex", ["外汇", "汇率", "FX", "Forex", "中间价"]),
             ("futures_option", ["期货", "期权", "Futures", "Option", "行权"]),
             ("rate", ["利率", "Shibor", "LPR", "互换", "收益率"]),
@@ -335,7 +359,7 @@ class ComplianceEngine:
             cat = self._cat_by_code.get('FIN_ENT_MGMT_RISK')
             if cat: return cat, 4
         # 金融产品类
-        if any(kw in text_lower for kw in ['股票', 'stock', '债券', 'bond', '基金', 'fund', '期货', '利率', 'rate']):
+        if any(kw in text_lower for kw in ['股票', 'stock', '债券', 'bond', '基金', 'fund', '期货', '利率', 'rate', '理财', '信托', '保险', '黄金']):
             cat = self._cat_by_code.get('FIN_BIZ_MKT_STOCK')
             if cat: return cat, 4
 

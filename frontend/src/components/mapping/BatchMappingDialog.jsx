@@ -46,10 +46,12 @@ export default function BatchMappingDialog({ open, onClose, onComplete }) {
     }
   }
 
-  const dirOptions = flatDirs.map((d) => ({
-    value: d.id,
-    label: `${'  '.repeat(d.level)}${d.name} (${d.code})`,
-  }))
+  const dirOptions = flatDirs
+    .filter((d) => !flatDirs.some((child) => child.parent_id === d.id))
+    .map((d) => ({
+      value: d.id,
+      label: `${'  '.repeat(d.level - 1)}${d.name} (${d.code})`,
+    }))
 
   return (
     <Modal

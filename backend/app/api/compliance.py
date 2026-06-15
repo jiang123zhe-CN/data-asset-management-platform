@@ -3,12 +3,14 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user, require_role
 from app.models.user import User
 from app.models.finance_category import FinanceDataCategory, FinanceGradingRule
+from app.models.threshold import ImportantDataSnapshot  # 确保表被 create_all 创建
 from app.schemas.standard import (
     FinanceCategoryCreate, FinanceCategoryUpdate, FinanceCategoryResponse,
     FinanceCategoryTreeNode, FinanceGradingRuleResponse,
@@ -204,3 +206,111 @@ def get_grading_matrix(_: User = Depends(get_current_user)):
         "data_levels": ["core", "important", "sensitive", "normal"],
         "matrix": {f"{t}/{l}": v for (t, l), v in sorted(GRADING_MATRIX.items())},
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Compliance Export (合规清单导出 §6.4)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/export/inventory/")
+@router.get("/export/inventory")
+def export_compliance_inventory(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """导出金融数据分类分级清单 — 符合指南§6.4标准格式（Excel）。"""
+    from app.services.excel_service import export_compliance_inventory as _export
+    output = _export(db)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": "attachment; filename=compliance_inventory_"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d')}.xlsx",
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Threshold Snapshot (30% 变化阈值追踪)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.post("/threshold/snapshot/")
+@router.post("/threshold/snapshot")
+def create_threshold_snapshot(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("data_admin", "system_admin", "admin")),
+):
+    """创建阈值快照（作为报送基线）。"""
+    from app.models.threshold import ImportantDataSnapshot
+    engine = ComplianceEngine(db)
+    current = engine.check_threshold()
+
+    prev = (
+        db.query(ImportantDataSnapshot)
+        .filter(ImportantDataSnapshot.is_active == True)
+        .order_by(ImportantDataSnapshot.created_at.desc())
+        .first()
+    )
+
+    snapshot = ImportantDataSnapshot(
+        created_by=current_user.id,
+        total_fields=current.get("total_critical", 0),
+        core_records=current.get("core_records", 0),
+        important_records=current.get("important_records", 0),
+        storage_estimate=current.get("storage_estimate", 0),
+        prev_total_fields=prev.total_fields if prev else None,
+        prev_core_records=prev.core_records if prev else None,
+        prev_important_records=prev.important_records if prev else None,
+        prev_storage_estimate=prev.storage_estimate if prev else None,
+        exceeds_threshold=current.get("exceeds_threshold", False),
+        status="draft",
+    )
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+
+    return {
+        "id": snapshot.id,
+        "created_at": snapshot.created_at.isoformat(),
+        "total_critical": snapshot.total_fields,
+        "core_records": snapshot.core_records,
+        "important_records": snapshot.important_records,
+        "exceeds_threshold": snapshot.exceeds_threshold,
+        "message": (
+            f"阈值{'已' if snapshot.exceeds_threshold else '未'}触发（30%基准）"
+            if snapshot.prev_total_fields is not None
+            else "首次快照创建成功，阈值检测基准已就位"
+        ),
+    }
+
+
+@router.get("/threshold/snapshots/")
+@router.get("/threshold/snapshots")
+def list_threshold_snapshots(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """获取阈值快照历史。"""
+    from app.models.threshold import ImportantDataSnapshot
+    snapshots = (
+        db.query(ImportantDataSnapshot)
+        .order_by(ImportantDataSnapshot.created_at.desc())
+        .limit(30)
+        .all()
+    )
+    return [
+        {
+            "id": s.id,
+            "created_at": s.created_at.isoformat(),
+            "total_fields": s.total_fields,
+            "core_records": s.core_records,
+            "important_records": s.important_records,
+            "prev_total_fields": s.prev_total_fields,
+            "prev_core_records": s.prev_core_records,
+            "prev_important_records": s.prev_important_records,
+            "exceeds_threshold": s.exceeds_threshold,
+            "status": s.status,
+        }
+        for s in snapshots
+    ]

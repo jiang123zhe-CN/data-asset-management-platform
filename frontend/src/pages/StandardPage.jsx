@@ -5,12 +5,13 @@ import {
 } from 'antd'
 import {
   EditOutlined, SafetyOutlined, ApartmentOutlined, ThunderboltOutlined,
-  WarningOutlined, CheckCircleOutlined,
+  WarningOutlined, CheckCircleOutlined, DownloadOutlined, CameraOutlined,
 } from '@ant-design/icons'
 import {
   getFinanceCategories, getFinanceCategory, updateFinanceCategory,
   getGradingMatrix, getGradingRules,
   runComplianceClassify, getThresholdCheck,
+  exportComplianceInventory, createThresholdSnapshot, getThresholdSnapshots,
 } from '../services/standardService'
 import { useAuth } from '../hooks/useAuth'
 
@@ -406,12 +407,18 @@ function GradingTab() {
 function ClassifyTab() {
   const [results, setResults] = useState([])
   const [threshold, setThreshold] = useState(null)
+  const [snapshots, setSnapshots] = useState([])
   const [loading, setLoading] = useState(false)
+  const [snapshotLoading, setSnapshotLoading] = useState(false)
 
   const loadThreshold = useCallback(async () => {
     try {
-      const t = await getThresholdCheck()
+      const [t, s] = await Promise.all([
+        getThresholdCheck(),
+        getThresholdSnapshots().catch(() => []),
+      ])
       setThreshold(t)
+      setSnapshots(s)
     } catch { /* ignore */ }
   }, [])
 
@@ -428,6 +435,28 @@ function ClassifyTab() {
       message.error(err.response?.data?.detail || '分类执行失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleExport = async () => {
+    try {
+      await exportComplianceInventory()
+      message.success('合规清单已导出')
+    } catch {
+      message.error('导出失败')
+    }
+  }
+
+  const handleSnapshot = async () => {
+    setSnapshotLoading(true)
+    try {
+      const result = await createThresholdSnapshot()
+      message.success(result.message || '快照已创建')
+      loadThreshold()
+    } catch (err) {
+      message.error(err.response?.data?.detail || '快照创建失败')
+    } finally {
+      setSnapshotLoading(false)
     }
   }
 
@@ -451,6 +480,25 @@ function ClassifyTab() {
       render: (v) => `${(v * 100).toFixed(0)}%` },
     { title: '方法', dataIndex: 'method', key: 'method', width: 120 },
   ]
+
+  const snapshotColumns = [
+    { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 170,
+      render: (v) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
+    { title: '核心', dataIndex: 'core_records', key: 'core', width: 60,
+      render: (v) => <Text style={{ color: '#cf1322' }}>{v}</Text> },
+    { title: '重要', dataIndex: 'important_records', key: 'important', width: 60,
+      render: (v) => <Text style={{ color: '#fa8c16' }}>{v}</Text> },
+    { title: '合计', dataIndex: 'total_fields', key: 'total', width: 60 },
+    { title: '上次合计', dataIndex: 'prev_total_fields', key: 'prev_total', width: 80,
+      render: (v) => v != null ? v : <Text type="secondary">首次</Text> },
+    { title: '阈值触发', dataIndex: 'exceeds_threshold', key: 'exceeds', width: 90,
+      render: (v) => v ? <Tag color="red"><WarningOutlined /> 已触发</Tag> : <Tag color="green">正常</Tag> },
+    { title: '状态', dataIndex: 'status', key: 'status', width: 80,
+      render: (v) => v === 'draft' ? <Tag>草稿</Tag> : v === 'submitted' ? <Tag color="blue">已报送</Tag> : <Tag color="green">已确认</Tag> },
+  ]
+
+  const exceedsThreshold = threshold?.exceeds_threshold
+  const hasPrev = threshold?.prev_total_critical != null
 
   return (
     <div>
@@ -487,22 +535,38 @@ function ClassifyTab() {
         <Col span={6}>
           <Card>
             <Statistic
-              title="30%阈值"
-              value={threshold?.threshold_30pct || 0}
-              suffix="条"
-              valueStyle={{ color: threshold?.total_critical > 0 && (threshold?.total_critical || 0) > (threshold?.threshold_30pct || 0) ? '#fa8c16' : '#52c41a' }}
+              title="变化率"
+              value={hasPrev ? `${(threshold?.change_pct * 100).toFixed(0)}%` : '—'}
+              suffix={hasPrev ? (exceedsThreshold ? '⚠️' : '✓') : ''}
+              valueStyle={{ color: exceedsThreshold ? '#cf1322' : '#52c41a' }}
             />
           </Card>
         </Col>
       </Row>
 
+      {exceedsThreshold && (
+        <Alert
+          message={`30%变化阈值已触发！核心/重要数据量从 ${threshold?.prev_total_critical} 变为 ${threshold?.total_critical}（变化 ${(threshold?.change_pct * 100).toFixed(0)}%）。请重新报送重要数据目录。`}
+          type="warning" showIcon icon={<WarningOutlined />} style={{ marginBottom: 16 }}
+        />
+      )}
+
       <Card
         title={<span><ThunderboltOutlined /> 执行合规分类分级</span>}
         extra={
-          <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleClassify} loading={loading}>
-            执行分类分级
-          </Button>
+          <Space>
+            <Button icon={<DownloadOutlined />} onClick={handleExport}>
+              导出合规清单
+            </Button>
+            <Button icon={<CameraOutlined />} onClick={handleSnapshot} loading={snapshotLoading}>
+              创建阈值快照
+            </Button>
+            <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleClassify} loading={loading}>
+              执行分类分级
+            </Button>
+          </Space>
         }
+        style={{ marginBottom: 16 }}
       >
         <Alert
           message="按《金融信息服务数据分类分级指南》（国信办通字〔2026〕2号）对所有活跃字段执行四步判定"
@@ -521,6 +585,24 @@ function ClassifyTab() {
           />
         ) : (
           <Empty description="点击上方按钮，对所有活跃字段执行金融合规分类分级" />
+        )}
+      </Card>
+
+      <Card title={<span><CameraOutlined /> 阈值快照历史（30%变化追踪）</span>}>
+        <Alert
+          message="快照记录了每次报送时核心/重要数据的统计量。与上次快照对比，任何维度变化超过30%即触发重新报送提醒。"
+          type="info" showIcon style={{ marginBottom: 16 }}
+        />
+        {snapshots.length > 0 ? (
+          <Table
+            columns={snapshotColumns}
+            dataSource={snapshots}
+            rowKey="id"
+            pagination={{ pageSize: 10, size: 'small' }}
+            size="small"
+          />
+        ) : (
+          <Empty description="暂无快照，点击「创建阈值快照」建立基线" />
         )}
       </Card>
     </div>

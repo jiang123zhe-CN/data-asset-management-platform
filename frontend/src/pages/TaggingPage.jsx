@@ -5,11 +5,11 @@ import {
 } from 'antd'
 import {
   ThunderboltOutlined, RobotOutlined, RocketOutlined, EditOutlined,
-  HistoryOutlined, ReloadOutlined, SafetyOutlined,
+  HistoryOutlined, ReloadOutlined, SafetyOutlined, DownloadOutlined,
 } from '@ant-design/icons'
 import { getTaggingStats, getTaggingResults, triggerTagging, getTaggingTaskStatus,
-         manualUpdateTagging, getTaggingHistory } from '../services/taggingService'
-import { getFinanceCategories } from '../services/standardService'
+         manualUpdateTagging, getTaggingHistory, exportTaggingResults } from '../services/taggingService'
+import { getFinanceCategories, runComplianceClassify } from '../services/standardService'
 import { useAuth } from '../hooks/useAuth'
 
 const { Title, Text } = Typography
@@ -71,7 +71,6 @@ export default function TaggingPage() {
   const runCompliance = async () => {
     setTaskRunning(true)
     try {
-      const { runComplianceClassify } = await import('../services/standardService')
       const results = await runComplianceClassify(null)
       message.success(`金融合规分类完成: ${results.length} 个字段`)
       load()
@@ -200,6 +199,9 @@ export default function TaggingPage() {
             <Select.Option value={true}>已打标</Select.Option>
             <Select.Option value={false}>未打标</Select.Option>
           </Select>
+          <Button icon={<DownloadOutlined />} onClick={() => {
+            exportTaggingResults().catch(() => message.error('导出失败'))
+          }}>导出结果</Button>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
         </Space>
       </Card>

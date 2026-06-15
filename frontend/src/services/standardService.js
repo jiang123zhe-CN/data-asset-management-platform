@@ -131,3 +131,29 @@ export function getThresholdCheck() {
 export function getTableLevel(tableName) {
   return api.get('/compliance/table-level', { params: { table_name: tableName } }).then(res => res.data)
 }
+
+// ── Compliance Export ──
+
+export function exportComplianceInventory() {
+  return api.get('/compliance/export/inventory', { responseType: 'blob' }).then((res) => {
+    const url = window.URL.createObjectURL(new Blob([res.data]))
+    const link = document.createElement('a')
+    link.href = url
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    link.setAttribute('download', `compliance_inventory_${date}.xlsx`)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+  })
+}
+
+// ── Threshold Snapshots ──
+
+export function createThresholdSnapshot() {
+  return api.post('/compliance/threshold/snapshot').then(res => res.data)
+}
+
+export function getThresholdSnapshots() {
+  return api.get('/compliance/threshold/snapshots').then(res => res.data)
+}
