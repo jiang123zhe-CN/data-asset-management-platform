@@ -8,12 +8,12 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   const login = useCallback((token, userData) => {
-    localStorage.setItem('token', token)
+    localStorage.setItem('dam_token', token)
     setUser(userData)
   }, [])
 
   const logout = useCallback(() => {
-    localStorage.removeItem('token')
+    localStorage.removeItem('dam_token')
     setUser(null)
   }, [])
 
@@ -25,7 +25,7 @@ export function AuthProvider({ children }) {
   )
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
+    const token = localStorage.getItem('dam_token')
     if (!token) {
       setLoading(false)
       return
@@ -33,7 +33,7 @@ export function AuthProvider({ children }) {
     api
       .get('/auth/me')
       .then((res) => setUser(res.data))
-      .catch(() => localStorage.removeItem('token'))
+      .catch(() => localStorage.removeItem('dam_token'))
       .finally(() => setLoading(false))
   }, [])
 
